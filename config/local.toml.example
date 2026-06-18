@@ -1,0 +1,6 @@
+# Geliştirici override'ları için local.toml şablonu.
+# Kullanım: cp config/local.toml.example config/local.toml
+# config/local.toml .gitignore'dadır, kişisel ayar dosyasıdır.
+[logging]
+level = "debug"
+# format = "json"  # production loglar için

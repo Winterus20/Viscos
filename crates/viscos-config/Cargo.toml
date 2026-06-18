@@ -1,0 +1,17 @@
+[package]
+name = "viscos-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos typed configuration loader (config-rs) with TOML + env var layered loading."
+
+[dependencies]
+config = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# Config struct'ın serialize/deserialize round-trip testi için.
+toml = "0.8"

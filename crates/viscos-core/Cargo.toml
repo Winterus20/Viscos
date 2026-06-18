@@ -1,0 +1,13 @@
+[package]
+name = "viscos-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos domain types, traits, and events. I/O-free (only std + serde)."
+
+[dependencies]
+serde = { workspace = true }
+viscos-error = { path = "../viscos-error" }

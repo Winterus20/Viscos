@@ -1,0 +1,28 @@
+[package]
+name = "viscos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos binary entry point — tracing init, config load, shell + watchdog + IPC bootstrap, graceful shutdown."
+
+[[bin]]
+name = "viscos"
+path = "src/main.rs"
+
+[dependencies]
+viscos-core = { path = "../viscos-core" }
+viscos-config = { path = "../viscos-config" }
+viscos-error = { path = "../viscos-error" }
+viscos-log = { path = "../viscos-log" }
+viscos-shell = { path = "../viscos-shell" }
+viscos-webview = { path = "../viscos-webview" }
+viscos-ipc = { path = "../viscos-ipc" }
+viscos-watchdog = { path = "../viscos-watchdog" }
+
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["signal", "rt", "macros"] }
+anyhow = { workspace = true }
+serde = { workspace = true }

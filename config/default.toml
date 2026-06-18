@@ -1,0 +1,35 @@
+[app]
+name = "Viscos"
+data_dir = "%APPDATA%/Viscos"
+
+[logging]
+level = "info"
+format = "pretty"
+
+# Faz 2.0 — Auth (ADR-0011)
+[auth]
+service_name = "Viscos"
+# Discord Web client_build_number.
+# Haftalık GitHub Action ile discord.com/app bundle'ından sync'lenir.
+# Manual sync: PR açarak build_number değerini güncelle.
+# Default: Discord'un bilinen son build_number'ından düşük olmamalı.
+build_number = 360000
+
+# İlk login'den sonra shadow_mode_hours saat boyunca yazma API'si bloklanır.
+# Default 24 (Faz 1.5 telemetry entegrasyonu için hook).
+# 0 = devre dışı.
+shadow_mode_hours = 24
+
+# Captcha redirect stratejisi (ADR-0011 §8):
+#   - "browser_redirect" (default): shell modal → tarayıcı aç → token yapıştır.
+#   - Headless browser YOK (binary bütçesi).
+captcha_strategy = "browser_redirect"
+
+# Faz 4.0 — Media cache (ADR-0010 §B)
+[media]
+foyer_disk_path = "{data_dir}/media"
+foyer_memory_mb = 32
+foyer_disk_gb = 10
+cdn_refresh_batch_size = 50
+cdn_refresh_threshold_hours = 23
+encryption_keyring_entry = "cache_encryption_key"

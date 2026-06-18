@@ -1,0 +1,112 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/viscos-core",
+    "crates/viscos-config",
+    "crates/viscos-error",
+    "crates/viscos-log",
+    "crates/viscos-shell",
+    "crates/viscos-webview",
+    "crates/viscos-ipc",
+    "crates/viscos-watchdog",
+    "crates/viscos-api",
+    "crates/viscos-auth",
+    "crates/viscos-cache",
+    "crates/viscos-media",
+    "crates/viscos",
+]
+
+# Henüz oluşmayan crate'ler (Faz 4+) — diğer worker'lar kendi fazlarında ekleyecek:
+#    "crates/viscos-telemetry",   # Faz 1.5 — Telemetry Worker
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"           # ADR-0006: twilight-rs 0.17 MSRV uyumu
+license = "GPL-3.0"
+authors = ["Viscos Contributors"]
+repository = "https://github.com/viscos/viscos"
+
+[workspace.dependencies]
+# Async runtime — GRANULAR (full değil)
+tokio = { version = "1.40", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "fs",
+    "net",
+    "io-util",
+] }
+
+# Logging — async/structured
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "tracing-log"] }
+tracing-appender = "0.2"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Config — config-rs (ADR-0003)
+config = { version = "0.14", default-features = false, features = ["toml", "convert-case"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Discord API — twilight-rs (ADR-0008)
+# Faz 2.0: REST + model. Faz 3.0'da twilight-gateway eklenecek.
+twilight-model = { version = "0.17", default-features = false }
+twilight-http = { version = "0.17", default-features = false, features = [
+    "rustls-platform-verifier",
+    "simd-json",
+] }
+
+# Auth — keyring-core 4.0 mimarisi (ADR-0011)
+# search feature kapalı → regex (~1+ MB) dependency'si YOK (25 MB bütçe).
+keyring-core = { version = "1", default-features = false }
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+# MFA
+totp-rs = { version = "5.7", default-features = false, features = ["zeroize"] }
+
+# Bellek hijyeni — Secret<String> + ZeroizeOnDrop zorunlu
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = { version = "1", features = ["derive"] }
+
+# QR login (UI render)
+qrcode = "0.14"
+
+# Pencere + WebView (Faz 1.0). Crate'ler kendi Cargo.toml'larında declare eder.
+tao = { version = "0.35", default-features = false }
+wry = { version = "0.55", default-features = false, features = ["os-webview", "tracing"] }
+
+# Windows API — GDI counter (Faz 1.0 watchdog). Crate'ler kendi target dep'lerinde declare eder.
+windows = { version = "0.58", default-features = false, features = [
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Test helpers (Faz 2.0 REST integration test'leri)
+mockito = "1.5"
+
+# Cache + Media stack (Faz 4.0, ADR-0010)
+rusqlite = { version = "=0.31", features = ["bundled", "blob"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
+refinery = { version = "0.8", features = ["rusqlite"] }
+moka = { version = "0.12", features = ["future", "sync"] }
+foyer = { version = "0.11" }
+foyer-storage = "0.10"
+aes-gcm = "0.10"
+argon2 = "0.5"
+tikv-jemallocator = "0.5"
+hex = "0.4"
+async-trait = "0.1"
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "fat"                    # 15-25 MB binary hedefi için kritik
+codegen-units = 1
+strip = true
+panic = "abort"                # unwinding maliyeti yok, binary küçülür

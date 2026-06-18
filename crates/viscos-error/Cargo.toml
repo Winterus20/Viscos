@@ -1,0 +1,14 @@
+[package]
+name = "viscos-error"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos typed error types (thiserror) and anyhow re-export for the application boundary."
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+config = { workspace = true }

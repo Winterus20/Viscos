@@ -1,0 +1,5 @@
+[toolchain]
+# Edition 2024 + twilight-rs 0.17 MSRV uyumu (ADR-0006)
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-src"]
+profile = "minimal"

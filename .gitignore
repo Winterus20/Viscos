@@ -1,0 +1,76 @@
+# Viscos — .gitignore (Faz 0.5)
+# Foundation worker (Faz 0.0) ile koordinasyon: target/ ve dist/ eklenmemişse
+# burada tanımlı; eklenmişse mevcut kurallar korunur.
+
+# --- Rust ---
+target/
+**/target/
+Cargo.lock.bak
+*.rs.bk
+
+# --- Node (frontend/) ---
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.parcel-cache/
+.eslintcache
+.pnpm-store/
+
+# --- IDE / Editor ---
+.idea/
+.vscode/*
+!.vscode/settings.json.example
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Local secrets / build artifacts ---
+*.local
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.pfx
+secrets/
+config/local.toml
+config/local.yaml
+
+# --- CI / Coverage artifacts ---
+coverage/
+*.lcov
+*.profraw
+*.profdata
+sccache/
+sccache.log
+
+# --- CEF / WebView cache (runtime) ---
+# Kullanıcının %APPDATA%/Viscos/cef-cache'i değil; build artifact'ları
+# (Faz 8.5+ build pipeline'ı bu dizinleri üretebilir)
+cef-build/
+cef-dist/
+
+# --- Tauri / wry (Faz 1+) ---
+# Faz 1'de kullanılırsa eklenebilir; şimdilik temkinli
+# gen/schemas/
+
+# --- Cursor / agent transient state ---
+.cursor/projects/
+.cursor/worktrees/
+.cursor-ignore.local
+
+# --- Phase planning (geçici, working) ---
+# .cursor/plans/ ana depoda tutulur; kişisel taslaklar burada olabilir
+.cursor/plans.local/
+.cursor/drafts/
+
+# --- sccache remote (varsa) ---
+# .sccache/
