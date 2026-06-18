@@ -1,0 +1,19 @@
+[package]
+name = "viscos-webview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "WebView backend abstraction layer (WebView2 + CEF) — pluggable backend seçimi, Faz 1.6+."
+
+[dependencies]
+viscos-error = { path = "../viscos-error" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+tao = { workspace = true }
+wry = { workspace = true }

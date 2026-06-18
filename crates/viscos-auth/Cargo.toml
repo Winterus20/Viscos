@@ -1,0 +1,51 @@
+[package]
+name = "viscos-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos auth stack — keyring-core + secrecy + TOTP + MFA + X-Super-Properties + ToS disclaimer. (ADR-0011)"
+
+[features]
+default = []
+# Faz 7.0 native voice/video için DAVE E2EE compile-time API surface.
+# `cargo check --features dave` ile davey tip import'ları doğrulanır.
+dave = ["dep:davey"]
+
+[dependencies]
+viscos-core = { path = "../viscos-core" }
+viscos-error = { path = "../viscos-error" }
+viscos-api = { path = "../viscos-api" }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+rand = "0.8"
+
+# Keyring-core 4.0 mimarisi (ADR-0011)
+keyring-core = { workspace = true }
+windows-native-keyring-store = { workspace = true }
+
+# Bellek hijyeni
+secrecy = { workspace = true }
+zeroize = { workspace = true }
+
+# MFA
+totp-rs = { workspace = true }
+
+# QR login (UI render)
+qrcode = { workspace = true }
+
+# DAVE E2EE (Faz 7'de aktif; şimdi optional + compile-time check)
+davey = { version = "0.1", optional = true }
+
+[dev-dependencies]
+# MFA TOTP RFC 6238 vectors için.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# Kullanıcı tarafından geçilebilecek base64 helper'lar için.
+base64 = "0.22"

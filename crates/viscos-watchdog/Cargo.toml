@@ -1,0 +1,24 @@
+[package]
+name = "viscos-watchdog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GDI object leak watchdog + draft autosave hook (Faz 1.0 — WebView2 upstream bug mitigation)."
+
+[dependencies]
+viscos-core = { path = "../viscos-core" }
+viscos-error = { path = "../viscos-error" }
+viscos-ipc = { path = "../viscos-ipc" }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation"] }

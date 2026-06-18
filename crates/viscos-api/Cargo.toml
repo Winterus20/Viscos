@@ -1,0 +1,33 @@
+[package]
+name = "viscos-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Viscos Discord REST adapter — twilight-http wrapper, rate-limit, super-properties. Gateway (Faz 3) buraya eklenecek."
+
+[dependencies]
+viscos-core = { path = "../viscos-core" }
+viscos-error = { path = "../viscos-error" }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+secrecy = { workspace = true }
+
+twilight-model = { workspace = true }
+twilight-http = { workspace = true }
+
+# Faz 3.0 Gateway worker'ı viscos-api'ye `viscos-gateway` modülü ekleyecek.
+# Bu crate'in şu anki sürümü sadece REST katmanını içerir.
+
+[dev-dependencies]
+# Integration test'lerinde mock HTTP server (login flow simülasyonu).
+mockito = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# `twilight-http` rustls crypto provider'ı test ortamında kurmak için.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

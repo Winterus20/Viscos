@@ -1,0 +1,20 @@
+[package]
+name = "viscos-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Pull-based IPC bridge between Rust backend and Discord web frontend (Faz 1.0 iskelet)."
+
+[dependencies]
+viscos-error = { path = "../viscos-error" }
+viscos-core = { path = "../viscos-core" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+thiserror = { workspace = true }

@@ -1,0 +1,26 @@
+{
+  "name": "viscos-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Viscos preload bridge — window.viscos global API for Discord web frontend (Faz 1.0).",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/bridge.ts --bundle --format=iife --outfile=dist/preload.js --target=es2022",
+    "build:webpack-shim": "esbuild src/webpack-shim.ts --bundle --format=iife --outfile=dist/webpack-shim.js --target=es2022",
+    "lint": "eslint src/ tests/",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^9.17.0",
+    "jsdom": "^25.0.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
