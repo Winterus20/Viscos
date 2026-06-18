@@ -1,0 +1,185 @@
+# AI Agent Guidelines — Viscos
+
+> **Hedef kitle:** Cursor / Claude / Codey / benzeri AI ajanları ve insan katkıcılar.
+> **Bağlayıcı olan:** Aşağıdaki kurallar. Bu kuralları ihlal eden PR'lar CI'da kırmızı olur ve insan review'da geri çevrilir.
+> **Referanslar:** [`docs/DECISIONS.md`](../docs/DECISIONS.md) (ADR'ler), [`docs/AI-WORKFLOW.md`](../docs/AI-WORKFLOW.md) (iş akışı), `.cursor/plans/phase-*.md` (faz playbook'ları).
+
+## 1. Genel
+
+- **Rust 1.89, edition 2024** (`rust-version = "1.89"`, `edition = "2024"`). MSRV'yi bump'lama — `twilight-rs` ile hizalı (ADR-0006).
+- **`rustdoc` her public API'de ZORUNLU.** `cargo doc --workspace --no-deps` clean olmalı. `# Errors`, `# Panics`, `# Examples` bölümleri publicly fallible / panicky / non-obvious API'lerde zorunlu.
+- **Yorum felsefesi:** "Neden" yorumu yaz, "ne" yapan yorumu **YASAK**. Self-explanatory code'a yorum ekleme. Bunun yerine, kodun niyetini netleştiren isimlendirme veya refactor tercih et.
+- **`unsafe` yorumu:** Her `unsafe { }` bloğu **güvenlik gerekçesi** (safety comment) ile dokümante edilmeli — bu blok neden sound, hangi invariant'a dayanıyor, hangi precondition sağlanmalı. `cargo geiger` CI'da raporlanır.
+- **Todo / unimplement:** `todo!()` veya `unimplemented!()` üretim kodunda YASAK. Issue açılmadan merge yok (master index Bölüm 4.7).
+
+## 2. Dosya Boyutu Sınırları (ZORUNLU)
+
+- **>400 satır olan dosyada refactor öner.** Yeni PR'da 400 satırı aşan bir `.rs` dosyası eklemek / büyütmek için PR description'da "neden gerekli" gerekçesi + refactor planı zorunlu.
+- **>600 satır → ZORUNLU refactor.** CI kırmızı işaretler, PR review'da merge öncesi refactor talep edilir. Yardımcı eşik: 600 satırı aşan modüller sorumluluk ayrımı ihlal ediyor olabilir — `viscos-core`'daki bir entity fazla method biriktirmiş veya yeni bir module'a bölünmeli.
+- **PR başına değişiklik:** >500 satır değişiklik → parçala. Birden fazla bağımsız concern'i tek PR'da toplama.
+- **Tipografi sayımı:** dahil edilen `use` ve boş satırlar dahil `.rs` dosyasının tamamı. Doc string'ler hariç tutulmaz.
+
+## 3. Kapsam Disiplini (Scope Creep YASAK)
+
+- **Her görev yalnızca kendi faz dosyası kapsamında.** Görev atandığında ilgili `.cursor/plans/phase-X.Y-*.md` dosyasını oku; "Out of Scope" bölümüne yazılan şeyleri **yapma**.
+- **"Tüm dosyaları refactor et", "her crate'i güncelle" gibi talimatları YAPMA.** İlgili olmayan refactor PR'ları reddedilir. Refactor gerekirse ayrı PR + ayrı faz dosyası aç.
+- **Faz dışı bağımlılık ekleme.** Faz X'te olmayan bir crate'in sorumluluğunu X'in PR'ında çözme. Cross-cutting watchdog / telemetry Faz 1'den itibaren ortak altyapıdır; mimari karar gerektiren yeni bir cross-cutting concern insan onayı ister.
+- **Touch radius:** Bir PR'ın değiştirdiği dosya sayısı 10'dan fazlaysa, büyük olasılıkla scope creep — parçala.
+
+## 4. İnsan Onayı Gereken Durumlar (Hard Limit)
+
+Aşağıdaki değişikliklerden herhangi biri **PR description'da "Human Decision Required" bölümü** ile gelmeli ve insan review merge öncesi onayı olmadan birleştirilmemelidir:
+
+- **Yeni public API** (crate'in dış yüzeyine yeni tip, fonksiyon, trait, macro)
+- **Yeni external dependency** (`Cargo.toml`'a yeni crate — minor/patch bump'lar hariç; ADR değişikliği gerektirir)
+- **Davranış değişikliği** (kullanıcı gözlenebilir davranış değişirse — IPC contract, hotkey, tray davranışı, disk üzerinde dosya formatı, default config değeri)
+- **Telemetri kapsamı değişikliği** (yeni toplanan alan, üçüncü partiye gönderilen yeni veri, telemetry opt-out default değişikliği — `docs/DECISIONS.md` ADR ve `docs/AI-WORKFLOW.md` ile uyumlu)
+- **Güvenlik / auth etkisi** (token storage, keyring, encryption, IPC auth, ToS-ilişkili her değişiklik — ADR-0011)
+- **Breaking config değişikliği** (`config.toml` schema değişikliği, eski anahtarları geçersiz kılan migration, default davranış değişimi)
+
+## 5. Üretim Kodu Yasakları (CI fail)
+
+- **`unwrap()` üretim kodunda YASAK.** Test, doctest, example, build script'lerinde OK. Üretim kodunda `?` veya `expect("gerekçe")` kullan.
+- **`expect()` üretim kodunda YASAK** (sadece test/example). Üretimde `Result` veya `.context("gerekçe")` ile ilet.
+- **`println!` üretim kodunda YASAK.** `tracing::{info, warn, error, debug, trace}` + structured fields kullan.
+- **`dbg!()` üretim kodunda YASAK.** Hata ayıklamadan kaldır.
+- **`eprintln!` üretim kodunda YASAK** (aynı gerekçe).
+- **Tüm üretim kodu hata yönetimi:** `thiserror` (kütüphane hataları, `#[non_exhaustive]`) + `anyhow` (uygulama / glue code) — **ADR-0007**.
+
+## 6. Mimari ve Async
+
+- **Async runtime:** Sadece `tokio`, granular feature'larla (`default-features = false`, `rt-multi-thread + macros + sync + time + fs + net + io-util`). `tokio::full` YASAK. ADR-0002.
+- **Config:** `config-rs` (figment değil). ADR-0003.
+- **Cache:** `moka` (RAM) + `foyer` (disk) + `rusqlite` (SQLite WAL). ADR-0010.
+- **Discord transport:** `twilight-rs` (`twilight-model` + `twilight-http` + `twilight-gateway`). ADR-0008.
+- **Auth:** `keyring-core 0.7` + `windows-native-keyring-store 1.1` + `secrecy 0.10` + `zeroize 1`. ADR-0011.
+- **Allocator v1:** system default; jemalloc Faz 4 sonunda benchmark ile koşullu.
+- **Cross-cutting:** `tracing` + `tracing-subscriber` + `tracing-appender` (Faz 1+).
+
+## 7. Frontend (TypeScript) — `frontend/src/`
+
+- Konum: yalnız `frontend/src/` altında (root'ta `.ts` dosyası bırakma).
+- **ESLint + Prettier config zorunlu.** PR'da `pnpm lint` (veya `npm run lint`) ve `pnpm format:check` clean olmalı.
+- **Selector resilience kuralları** (ADR-0012 §2 — bridge.ts):
+  - `querySelector` ile hashed class (`.message__5126c`) → YASAK.
+  - `querySelector` ile `[aria-label]` / `[role]` / `[data-*]` → OK.
+  - `querySelector` ile prefix'li class (`[class*="prefix"]`) → son çare.
+  - Webpack module discovery (`findByProps`, `findByCode`) → OK.
+  - **DOM observer + heuristic ile tahmin** → YASAK; native taraftan pull.
+- **Bridge state pull (varsayılan):** `await viscos.invoke({ type, data })` — `eval_script` payload >10KB → CI red flag (Faz 1.5 tool).
+- **Rust → JS push:** sadece küçük olaylar (tray badge, native notification). Geniş state transferi **SharedBuffer** ile Faz 4+.
+
+## 8. IPC Contract
+
+- **Rust tarafı kaynaktır.** `crates/viscos-ipc/src/commands.rs` + `crates/viscos-ipc/src/events.rs` kanonik command/event enum'larını tutar.
+- **`frontend/src/bridge.ts` Rust tarafını yansıtır.** Her yeni command Rust'a eklenir, sonra TypeScript tarafı derive edilir. Tek taraflı yazım YASAK.
+- **Pull-based varsayılan.** WebView2 buffer şişmesini önler (ADR-0012, Bölüm 3 / `webview2-hardening.md`).
+- **Serde:** Rust tarafı `#[derive(Serialize, Deserialize)]`; TS tarafı `zod` veya manuel tip tanımı + runtime guard.
+- **Versiyon:** `IPC_PROTOCOL_VERSION` her iki tarafta sabit, breaking change → major bump + ADR.
+
+## 9. Test, Lint, Submit Kuralları
+
+- **Test etmeden submit etme.** Her public fonksiyon için en az 1 unit test. Integration test: `crates/viscos-*/tests/`. Coverage hedefi: %80 her crate.
+- **`cargo fmt --all -- --check` clean olmadan PR açma.** Default rustfmt + max_width=100.
+- **`cargo clippy --workspace --all-targets -- -D warnings` clean olmadan PR açma.** Pedantic + nursery aktif; bilinçli `#[allow(...)]` PR description'da gerekçe ister.
+- **`cargo test --workspace` yeşil olmadan PR açma.** Flaky test → `cargo nextest run --retries 2` ile retry; kalıcı flaky → fail.
+- **Coverage drop PR'ı reddedilir.** `%80` altına düşen crate için PR description'da "neden" gerekçesi.
+- **`unsafe` kodu satır satır dokümante et** + PR description'da güvenlik gerekçesi.
+- **Co-author insan adı zorunlu** (her commit'te `Co-authored-by:`). AI türü PR'da "AI-Generated: yes" label + commit prefix'inde `[AI]` tag'i opsiyonel ama önerilir.
+
+## 10. Commit Mesajı — Conventional Commits
+
+```
+<type>(<scope>): <kısa-özet>  [AI]
+
+<gövde — neden değişti, hangi kararı uyguladı, hangi ADR'ye referans>
+
+<footer>
+Refs: ADR-0007
+Closes: #123
+Co-authored-by: İnsan Adı <insan@example.com>
+```
+
+**Type:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`.
+**Scope:** crate adı (`core`, `api`, `cache`, `media`, `shell`, `webview`, `watchdog`, `ipc`, `auth`, `config`, `frontend`, `ci`).
+**Örnekler:** `feat(auth): add TOTP+backup code flow (ADR-0011)`, `fix(webview): throttle pointermove to avoid GDI leak (closes #42)`.
+
+## 11. PR Etiketleme ve Yaşam Döngüsü
+
+- **Her PR'da `AI-Generated` label zorunlu** (AI-PR ise). Tamamen insan yazdıysa etiket yok, insan author bilgisi yeterli.
+- **Etiket seti:** `AI-Generated`, `needs-human-decision`, `phase-X.Y`, `breaking`, `security`, `area:<crate>`, `priority:<high|med|low>`, `do-not-merge` (WIP).
+- **PR yaşam döngüsü:** AI branch açar → implement + test → self-review → insan review → CI green → merge.
+- **Self-review checklist (PR description'a yapıştır):**
+  - [ ] `cargo fmt --all -- --check` clean
+  - [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean
+  - [ ] `cargo test --workspace` yeşil
+  - [ ] Eklenen/değiştirilen public API'lerde rustdoc var
+  - [ ] ADR referansı (değişiklik ADR'ye bağlıysa)
+  - [ ] Out-of-scope dokunulan dosya yok
+  - [ ] Production `unwrap`/`expect`/`println!`/`dbg!` yok
+  - [ ] Yeni dosya 400 satırın altında (veya gerekçe var)
+  - [ ] Co-author insan adı commit'te var
+
+## 12. AI-PR Auto-Merge Kategorileri (önerilen)
+
+İnsan review olmadan auto-merge **YAPMA**. Aşağıdaki kategoriler insan review'ı kısa tutabilir (30 dk altı):
+
+- docs typo fix (markdown lint clean)
+- dependency minor version bump (CI geçerse, ADR-0010/0011 minor bump politikasına uygun)
+- rustdoc iyileştirmesi (kod değişikliği yok, sadece yorum)
+- yeni test (mevcut kodu değiştirmez)
+
+Bunun dışındaki her şey tam insan review ister.
+
+## 13. ADR Değişikliği Tetikleme
+
+Yeni bir pattern / mimari karar / dış bağımlılık gerekirse:
+
+```
+Yeni pattern fark edildi
+  → spike (`/adr-spike`)
+  → ADR draft (`/adr-new`, 🟡 Proposed durumda)
+  → insan review + onay (Status: ✅ Accepted)
+  → migration PR (Acceptance criteria + uygulama)
+```
+
+AI agent **kabul edilmiş ADR'yi ihlal eden PR açamaz.** ADR-0007 (thiserror + anyhow) dışında farklı bir hata yönetimi kütüphanesi öneren PR'lar otomatik reddedilir.
+
+## 14. Bilinen Trade-off'lar (Referans)
+
+- **WebView2 GDI leak** (Microsoft issue #5536): watchdog (Faz 1) + throttling (Faz 1.5) + CEF default (Faz 1.6 + ADR-0012).
+- **Linux v2 WebKitGTK sorunlu:** pluggable backend mimarisi (`WebViewBackend` trait) zorunlu.
+- **Self-bot ToS riski:** mimari bunu çözemez, kullanıcı sorumluluğundadır (ADR-0011 canonical disclaimer).
+- **Discord DOM churn:** bridge.ts selector resilience kuralları (ADR-0012 §2) + native taraftan state pull.
+- **DAVE E2EE (Faz 7):** v1'de atlanır, `davey` optional dependency Faz 2.0'da API surface sabitler.
+
+## 15. Yapma (Hard Don'ts)
+
+- ❌ PR'ı `--no-verify` ile skip etme (pre-commit hook bypass)
+- ❌ Düzeltilmemiş `clippy::pedantic` warning ile merge
+- ❌ Force push `main`/`master`'a
+- ❌ `target/` veya `dist/` içeriğini commit etme
+- ❌ Sırları / API anahtarlarını / private key'i commit etme (örnek veya fixture dahil)
+- ❌ Production binary'yi CI dışında elle imzalama
+- ❌ Yeni crate / yeni büyük dependency insan onayı olmadan
+- ❌ ADR'ye aykırı mimari karar
+- ❌ Faz X'in scope'unu aşan refactor / feature
+- ❌ Büyük PR (>500 satır değişiklik) — parçala
+
+## 16. Sık Başvurulan Dosyalar
+
+| Amaç | Yol |
+|------|-----|
+| Mimari kararlar | `docs/DECISIONS.md` |
+| İş akışı kuralları | `docs/AI-WORKFLOW.md` |
+| Faz playbook'ları | `.cursor/plans/phase-X.Y-*.md` |
+| Master index | `.cursor/plans/viscos_index.md` |
+| AI task template'leri | `.cursor/templates/*.md` |
+| Cursor slash command'lar | `.cursor/commands/*.md` |
+| PR şablonu | `.github/PULL_REQUEST_TEMPLATE.md` |
+| CI workflow | `.github/workflows/ai-task-validate.yml` |
+| WebView2 hardening | `.cursor/plans/webview2-hardening.md` |
+| Frontend mimari | `docs/CEF-VS-WEBVIEW2.md`, ADR-0012 |
+| Auth stack | `.cursor/plans/viscos_auth_research.md`, ADR-0011 |
+| Cache stack | `.cursor/plans/cache-stack-research.md`, ADR-0010 |
+| Bridge resilience | `.cursor/plans/bridge-resilience-research.md`, ADR-0012 |

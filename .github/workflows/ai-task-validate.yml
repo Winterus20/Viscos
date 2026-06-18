@@ -1,0 +1,206 @@
+name: AI Task Validation
+
+# Faz 0.5 — AI Workflow Setup
+# Bu workflow AI-PR'larını doğrular: pre-check (label), fmt, clippy, test,
+# eval_script payload audit, unwrap/expect/println/dbg tarama, dosya boyutu taraması.
+# Branch protection'da "Required status check" olarak ayarlanmalıdır (README notu).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Aynı PR için iptal edilen eski run'ı otomatik kapat
+concurrency:
+  group: ai-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  ai-validate:
+    name: AI Task Validation
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain (1.89)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build (Swatinem rust-cache)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check AI-Generated label (pre-check)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LABELS_JSON=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name')
+          echo "PR labels:"
+          echo "$LABELS_JSON"
+          if ! echo "$LABELS_JSON" | grep -qx "AI-Generated"; then
+            echo "::error::AI-Generated label zorunlu. PR'a 'AI-Generated' label'ı ekleyin (PR template'teki onay kutusu)."
+            echo "::error::İnsan-PR ise bu workflow tetiklenmemeli — branch'i manuel push edin veya label ekleyin."
+            exit 1
+          fi
+          echo "AI-Generated label OK."
+
+      - name: Format check
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build (workspace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --workspace --locked
+
+      - name: Test (workspace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --workspace --all-features
+
+      - name: Eval script payload audit (skip if no matches)
+        shell: bash
+        continue-on-error: false
+        run: |
+          set -euo pipefail
+          echo "Eval_script / execute_script call'larını arıyor..."
+          # tauri#13758: payload > 10KB red flag
+          # Sadece kütüphane kodu (crates/) hedef. Frontend kapsam dışı (ayrı lint).
+          PAYLOADS=$(rg --no-heading --line-number --type rust "eval_script|execute_script" crates/ || true)
+          if [ -z "$PAYLOADS" ]; then
+            echo "eval_script / execute_script call'u bulunamadı — skip."
+            exit 0
+          fi
+          echo "$PAYLOADS" | tee /tmp/eval_audit.txt
+          echo "::warning::eval_script call'ları bulundu. Payload boyutlarını manuel review edin (>10KB ise refactor)."
+
+      - name: Unwrap / expect scan (production code, fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Production code'da unwrap / expect aranıyor..."
+          # crates/ + frontend/src/ altında, test/example/build script hariç.
+          # Bu PR'da değişen dosyalara odaklanmak ideal olurdu ama full scan daha güvenli.
+          HITS=$(rg --no-heading --line-number \
+            -g '!*/test/*' \
+            -g '!*/tests/*' \
+            -g '!*/examples/*' \
+            -g '!*/build.rs' \
+            -e '\.unwrap\s*\(' \
+            -e '\.expect\s*\(' \
+            crates/ frontend/src/ --type rust --type ts || true)
+          if [ -n "$HITS" ]; then
+            echo "$HITS"
+            echo "::error::Production code'da unwrap()/expect() YASAK (test/example/build.rs hariç)."
+            echo "::error::? operatörü veya .context() kullanın. Bu kural .cursorrules Bölüm 5'te tanımlı."
+            exit 1
+          fi
+          echo "unwrap/expect scan: temiz."
+
+      - name: Println / dbg / eprintln scan (production code, fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Production code'da println! / dbg! / eprintln! aranıyor..."
+          HITS=$(rg --no-heading --line-number \
+            -g '!*/test/*' \
+            -g '!*/tests/*' \
+            -g '!*/examples/*' \
+            -g '!*/build.rs' \
+            -e 'println!\s*\(' \
+            -e 'eprintln!\s*\(' \
+            -e 'dbg!\s*\(' \
+            crates/ --type rust || true)
+          if [ -n "$HITS" ]; then
+            echo "$HITS"
+            echo "::error::Production code'da println!/eprintln!/dbg!() YASAK."
+            echo "::error::tracing::{info, warn, error, debug, trace} kullanın. .cursorrules Bölüm 5."
+            exit 1
+          fi
+          echo "println/dbg scan: temiz."
+
+      - name: File size scan (production code, >600 lines FAIL)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Üretim Rust kaynak dosyalarının satır sayısı taranıyor..."
+          THRESHOLD=600
+          WARN_THRESHOLD=400
+          FAILED=0
+          WARNED=0
+          # .rs uzantılı, test/example değil
+          while IFS= read -r -d '' file; do
+            LINES=$(wc -l < "$file" | tr -d '[:space:]')
+            if [ "$LINES" -gt "$THRESHOLD" ]; then
+              echo "::error file=$file::Dosya $THRESHOLD satırı aşıyor: $LINES satır. ZORUNLU refactor (.cursorrules Bölüm 2)."
+              FAILED=1
+            elif [ "$LINES" -gt "$WARN_THRESHOLD" ]; then
+              echo "::warning file=$file::Dosya $WARN_THRESHOLD satırı aşıyor: $LINES satır. Refactor önerilir."
+              WARNED=1
+            fi
+          done < <(find crates/ -type f -name '*.rs' \
+            -not -path '*/test/*' \
+            -not -path '*/tests/*' \
+            -not -path '*/examples/*' \
+            -print0)
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Dosya boyutu sınırı ihlal edildi. Refactor gerekli."
+            exit 1
+          fi
+          echo "Dosya boyutu scan: temiz. (Uyarılan dosya sayısı: $WARNED)"
+
+      - name: Conventional Commits check (commit messages)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "Son 20 commit'in Conventional Commits formatı kontrol ediliyor..."
+          # Base ref PR hedef branch (master / main / develop)
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          if [ -z "$BASE_REF" ]; then
+            BASE_REF="main"
+          fi
+          # fetch-depth:0 ile tüm history var
+          # İlk commit'i (merge base) bul
+          git fetch origin "$BASE_REF" --depth=1 || true
+          BASE_COMMIT=$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || echo "")
+          if [ -z "$BASE_COMMIT" ]; then
+            echo "Base commit bulunamadı, skip."
+            exit 0
+          fi
+          # Conventional Commits regex'i
+          PATTERN='^(feat|fix|refactor|docs|test|chore|perf|build|ci)(\([a-z0-9_-]+\))?!?: .{3,}'
+          BAD=$(git log "${BASE_COMMIT}..HEAD" --pretty=format:"%s" | grep -vE "$PATTERN" || true)
+          if [ -n "$BAD" ]; then
+            echo "Aşağıdaki commit mesajları Conventional Commits formatına uymuyor:"
+            echo "$BAD"
+            echo "::warning::Format: <type>(<scope>): <summary> — ör. 'feat(auth): add TOTP+backup (ADR-0011)'"
+          else
+            echo "Conventional Commits check: temiz."
+          fi

@@ -1,0 +1,141 @@
+# Viscos CI — 8 job (7 + size gate)
+# Faz 0.0: fmt, clippy, nextest, build (sccache), audit, deny, geiger, size gate.
+# ADR-0004: GitHub Actions + windows-latest + 2 katmanlı cache.
+# Concurrency: aynı branch'te eski workflow'ları iptal et.
+# Fail-fast: false — tüm job'lar paralel bitsin.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  # Haftalık güvenlik taraması (yeni advisory'ler için)
+  schedule:
+    - cron: "0 6 * * 1"  # Pazartesi 06:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"  # CI'da tüm warning'ler hard error
+  BINARY_SIZE_LIMIT_MB: "25"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # ─── 1. Format (en hızlı geri bildirim) ───────────────────────
+  fmt:
+    name: Format
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # ─── 2. Clippy (pedantic + nursery, deny warnings) ────────────
+  clippy:
+    name: Clippy
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ─── 3. Test (cargo nextest, paralel + izole) ────────────────
+  test:
+    name: Test (nextest)
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Compile check (--locked, registry cache kullanır)
+        run: cargo check --workspace --all-features --locked
+      - name: Run tests
+        run: cargo nextest run --workspace --all-features --retries 2
+      # Doc test'ler nextest kapsamında değil → ayrı adım
+      - name: Doc tests
+        run: cargo test --workspace --doc
+
+  # ─── 4. Release build (sccache + rust-cache) + SIZE GATE ──────
+  build:
+    name: Release build (size gate)
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+      - name: Build
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        run: cargo build --workspace --release --locked
+
+      # Binary bütçesi koruması (15-25 MB hedefi)
+      - name: Check binary size (gate: 25 MB)
+        shell: bash
+        run: |
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          MAX=$(( ${BINARY_SIZE_LIMIT_MB} * 1024 * 1024 ))
+          echo "Binary size: $SIZE bytes (max $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::Binary $SIZE bayt > ${BINARY_SIZE_LIMIT_MB} MB hedefini aştı"
+            exit 1
+          fi
+
+  # ─── 5. Security audit (haftalık + PR) ────────────────────────
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest  # Hız için (cargo-audit OS-agnostic)
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
+
+  # ─── 6. Cargo deny (license + source + ban) ────────────────────
+  deny:
+    name: Cargo deny (license + source + ban)
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+  # ─── 7. Unsafe kullanım raporu (warn-only) ───────────────────
+  geiger:
+    name: Unsafe report (warn-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Bilgi amaçlı, fail etmesin
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-geiger
+        uses: taiki-e/install-action@cargo-geiger
+      - run: cargo geiger --all-features
