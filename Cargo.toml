@@ -13,6 +13,7 @@ members = [
     "crates/viscos-auth",
     "crates/viscos-cache",
     "crates/viscos-media",
+    "crates/viscos-distribution",
     "crates/viscos",
 ]
 
@@ -43,6 +44,7 @@ tokio = { version = "1.40", default-features = false, features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "tracing-log"] }
 tracing-appender = "0.2"
+parking_lot = "0.12"
 
 # Error handling
 thiserror = "1.0"
@@ -54,10 +56,16 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Discord API — twilight-rs (ADR-0008)
-# Faz 2.0: REST + model. Faz 3.0'da twilight-gateway eklenecek.
+# Faz 2.0: REST + model. Faz 3.0: twilight-gateway.
 twilight-model = { version = "0.17", default-features = false }
 twilight-http = { version = "0.17", default-features = false, features = [
     "rustls-platform-verifier",
+    "simd-json",
+] }
+twilight-gateway = { version = "0.17", default-features = false, features = [
+    "twilight-http",          # stream::create_recommended helper
+    "rustls-platform-verifier",
+    "zstd",                   # zstd-stream transport compression
     "simd-json",
 ] }
 
@@ -88,6 +96,15 @@ windows = { version = "0.58", default-features = false, features = [
 
 # Test helpers (Faz 2.0 REST integration test'leri)
 mockito = "1.5"
+
+# Faz 8.0 — Distribution (auto-updater, crash, profiling, code signing)
+self_update = { version = "0.42", default-features = false, features = [
+    "rustls",
+    "compression-zip-deflate",
+    "signatures",
+] }
+sha2 = "0.10"
+dhat = "0.3"
 
 # Cache + Media stack (Faz 4.0, ADR-0010)
 rusqlite = { version = "=0.31", features = ["bundled", "blob"] }

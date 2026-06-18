@@ -1,0 +1,58 @@
+//! Integration test — `CefUpdater` stub.
+
+use viscos_distribution::{CefRelease, CefUpdateTrigger, CefUpdater};
+
+#[test]
+fn default_feed_url_is_configured() {
+    let updater = CefUpdater::default();
+    assert!(updater.feed_url.starts_with("https://"));
+    assert!(updater.feed_url.contains("cef-builds"));
+}
+
+#[test]
+fn custom_feed_url_constructor() {
+    let updater = CefUpdater::new("https://example.com/index.json");
+    assert_eq!(updater.feed_url, "https://example.com/index.json");
+}
+
+#[tokio::test]
+#[ignore = "requires network + Windows elevation (reqwest rustls); run manually with --ignored"]
+async fn check_returns_none_in_phase_8_5_stub() {
+    let updater = CefUpdater::default();
+    let result = updater.check().await.expect("check stub");
+    assert!(result.is_none(), "Faz 8.5 stub must return Ok(None)");
+}
+
+#[tokio::test]
+#[ignore = "requires network + Windows elevation (reqwest rustls); run manually with --ignored"]
+async fn apply_stub_succeeds_with_full_release() {
+    let updater = CefUpdater::default();
+    let release = CefRelease {
+        version: "148.3.0".to_string(),
+        download_url: "https://cef-builds.spotifycdn.com/cef_binary_148.3.0.tar.bz2".to_string(),
+        sha256: "0".repeat(64),
+        release_date: "2026-06-01".to_string(),
+    };
+    updater.apply(release).await.expect("apply stub");
+}
+
+#[test]
+fn notification_text_distinguishes_triggers() {
+    let monthly = CefUpdater::notification_text(CefUpdateTrigger::ScheduledMonthly);
+    let weekly = CefUpdater::notification_text(CefUpdateTrigger::ScheduledWeekly);
+    let critical = CefUpdater::notification_text(CefUpdateTrigger::CriticalCveDetected);
+
+    assert!(monthly.contains("Aylık"));
+    assert!(weekly.contains("Haftalık"));
+    assert!(critical.contains("Kritik"));
+    assert_ne!(monthly, weekly);
+    assert_ne!(weekly, critical);
+    assert_ne!(monthly, critical);
+}
+
+#[test]
+fn with_defaults_matches_default_impl() {
+    let a = CefUpdater::default();
+    let b = CefUpdater::with_defaults();
+    assert_eq!(a.feed_url, b.feed_url);
+}

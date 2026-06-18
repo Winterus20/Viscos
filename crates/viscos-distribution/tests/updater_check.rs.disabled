@@ -1,0 +1,59 @@
+//! Integration test — `Updater` default config sanity check.
+
+use viscos_distribution::{DEFAULT_BINARY_NAME, DEFAULT_REPO, ReleaseInfo, Updater};
+
+#[test]
+fn updater_new_uses_default_repo_and_binary() {
+    let updater = Updater::new();
+    assert_eq!(updater.repo, DEFAULT_REPO);
+    assert_eq!(updater.binary_name, DEFAULT_BINARY_NAME);
+    assert_eq!(updater.repo, "Winterus20/Viscos");
+    assert_eq!(updater.binary_name, "viscos");
+}
+
+#[test]
+fn updater_repo_parts_splits_correctly() {
+    let updater = Updater::new();
+    let (owner, name) = updater.repo_parts().expect("repo_parts");
+    assert_eq!(owner, "Winterus20");
+    assert_eq!(name, "Viscos");
+}
+
+#[tokio::test]
+#[ignore = "requires network + Windows elevation (reqwest rustls); run manually with --ignored"]
+async fn updater_check_returns_none_in_phase_8_0_stub() {
+    let updater = Updater::new();
+    let result = updater.check().await.expect("check stub");
+    assert!(result.is_none(), "Faz 8.0 stub must report no new release");
+}
+
+#[tokio::test]
+#[ignore = "requires network + Windows elevation (reqwest rustls); run manually with --ignored"]
+async fn updater_apply_with_minimal_release_succeeds() {
+    let updater = Updater::new();
+    let release = ReleaseInfo {
+        version: "0.2.0".to_string(),
+        download_url: "https://github.com/Winterus20/Viscos/releases/download/v0.2.0/viscos.zip"
+            .to_string(),
+        sha256: "abcdef0123456789".repeat(4),
+    };
+    updater.apply(release).await.expect("apply stub");
+}
+
+#[test]
+fn updater_with_repo_override() {
+    let updater = Updater::with_repo("octocat/Hello-World", "hello");
+    assert_eq!(updater.repo, "octocat/Hello-World");
+    assert_eq!(updater.binary_name, "hello");
+    let (owner, name) = updater.repo_parts().expect("parts");
+    assert_eq!(owner, "octocat");
+    assert_eq!(name, "Hello-World");
+}
+
+#[test]
+fn updater_default_trait_impl_matches_new() {
+    let updater = Updater::default();
+    let new_updater = Updater::new();
+    assert_eq!(updater.repo, new_updater.repo);
+    assert_eq!(updater.binary_name, new_updater.binary_name);
+}

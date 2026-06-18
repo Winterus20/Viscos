@@ -22,5 +22,23 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 
+# Faz 5.0 — Native UI + theming + Vencord POC
+parking_lot = { workspace = true }
+
+# Faz 5.0 — Native notifications (Faz 1.5'te tray ile entegre olur)
+# notify-rust 4.x Windows desteği (winrt-notification); 1.x sadece Linux/BSD.
+notify-rust = { version = "4", default-features = false }
+
+# Faz 6.0 — Global + window hotkeys
+global-hotkey = "0.6"
+muda = "0.15"
+
+# Faz 6.0 — Windows auto-start (HKCU\...\Run registry)
+auto-launch = "0.5"
+
+# Faz 6.0 — Single-instance cross-process lock
+single-instance = "0.3"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tempfile = { workspace = true }

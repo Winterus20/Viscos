@@ -1,0 +1,30 @@
+# WinGet Manifest — Viscos v0.1.0
+#
+# Faz 8.0 deliverable. microsoft/winget-pkgs PR'i release zamanı açılacak.
+# Schema: https://github.com/microsoft/winget-cli/blob/master/schemas/manifests/...
+#
+# TODO(release-engineering):
+#   - SHA256 will be filled at release time (compute via `Get-FileHash viscos.msi`).
+#   - Version bump her release'te (0.1.0 → 0.2.0 → ...).
+#   - Locale additional manifests (tr-TR, de-DE, ...) follow-up PR.
+
+PackageIdentifier: Winterus20.Viscos
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Winterus20
+PackageName: Viscos
+License: GPL-3.0
+ShortDescription: High-performance hybrid Discord client for Windows
+Moniker: viscos
+Tags:
+  - discord
+  - discord-client
+  - native
+  - rust
+  - webview2
+Installers:
+  - Architecture: x64
+    InstallerType: msi
+    InstallerUrl: https://github.com/Winterus20/Viscos/releases/download/v0.1.0/viscos-webview2.msi
+    InstallerSha256: REPLACE-WITH-ACTUAL-SHA256
+ManifestType: defaultLocale

@@ -33,3 +33,49 @@ foyer_disk_gb = 10
 cdn_refresh_batch_size = 50
 cdn_refresh_threshold_hours = 23
 encryption_keyring_entry = "cache_encryption_key"
+
+# Faz 8.0 — Distribution + Auto-update
+[distribution]
+auto_update = true
+update_channel = "stable"  # stable | beta | nightly
+repo = "Winterus20/Viscos"
+binary_name = "viscos"
+msi_installer_url = "https://github.com/Winterus20/Viscos/releases/latest/download/viscos-webview2.msi"
+
+# Faz 8.0 — Crash reporting (opt-in)
+[crash]
+opt_in = false
+reporter_url = ""  # boş = disabled (lokal diske yaz, network'e gönderme)
+dump_dir = "{data_dir}/crash-dumps"
+
+# Faz 8.0 — Profiling altyapısı
+# dhat heap profiling sadece debug derlemede — release binary'de yok.
+# Çalıştırma: cargo run --features dhat --release (viscos-distribution).
+[profiling]
+heap_dhat = false
+
+# Faz 8.5 — İleri seviye Chromium flags (CEF + WebView2 ortak)
+[chromium]
+flags = ["--disable-features=msSmartScreenProtection"]
+
+# Faz 8.5 — CEF runtime yönetim altyapısı
+[cef]
+version = "148.3.0"
+install_path = "{data_dir}/cef"
+update_feed = "https://cef-builds.spotifycdn.com/index.json"
+auto_update = false  # v1'de manual, Faz 8.5 default-out
+
+# Faz 6.0 — Global + window hotkeys
+# Override kullanıcı `local.toml`'da olabilir (örn. toggle_mute = "F1").
+[hotkeys]
+toggle_mute = "Ctrl+Shift+M"
+toggle_deafen = "Ctrl+Shift+D"
+quick_switcher = "Ctrl+K"
+open_settings = "Ctrl+Comma"
+
+# Faz 6.0 — Shell entegrasyonu (deep link, single-instance, auto-start)
+[integration]
+single_instance = true
+autostart = false
+deep_link_scheme = "viscos"
+drag_drop_enabled = true

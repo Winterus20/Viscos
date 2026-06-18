@@ -21,9 +21,7 @@ secrecy = { workspace = true }
 
 twilight-model = { workspace = true }
 twilight-http = { workspace = true }
-
-# Faz 3.0 Gateway worker'ı viscos-api'ye `viscos-gateway` modülü ekleyecek.
-# Bu crate'in şu anki sürümü sadece REST katmanını içerir.
+twilight-gateway = { workspace = true }
 
 [dev-dependencies]
 # Integration test'lerinde mock HTTP server (login flow simülasyonu).

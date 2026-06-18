@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Viscos MSI installer template (WiX 3).
+
+  Faz 8.0 — sadece iskelet. Gerçek build release engineering sırasında
+  `cargo wix init` ile scaffold edilip bu template üzerine genişletilecek.
+
+  Build:
+    cargo install cargo-wix
+    cargo wix init
+    cargo wix (nocapture)
+    Output: target/wix/viscos-0.1.0-x86_64.msi
+
+  TODO(release-engineering): replace `PUT-GUID-HERE` placeholder below with
+  a stable GUID generated via `uuidgen` veya PowerShell `[guid]::NewGuid()`.
+  UpgradeCode bir kez belirlenip ASLA değişmemelidir — major upgrade tracking
+  bu GUID üzerinden yapılır.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Viscos"
+           Version="0.1.0"
+           Manufacturer="Viscos Project"
+           UpgradeCode="PUT-GUID-HERE">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Viscos is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="ProductFeature" Title="Viscos" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLDIR" Name="Viscos" />
+      </Directory>
+    </Directory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLDIR">
+      <Component Id="ViscosBinary" Guid="*">
+        <File Source="$(var.CargoTargetDir)\release\viscos.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+  </Product>
+</Wix>
