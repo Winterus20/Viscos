@@ -88,7 +88,10 @@ mod tests {
 
     #[test]
     fn heap_profiling_enabled_matches_feature_flag() {
-        // Test binary'si `dhat` feature ile derlenmedi → false beklenir.
-        assert!(!heap_profiling_enabled());
+        // `cfg!` runtime macro — feature flag'in gerçek değerini yansıtır.
+        // Default build (feature yok) → false; `--all-features` (dhat açık) → true.
+        // Tek assertion ile iki yönü de doğrular.
+        let expected = cfg!(feature = "dhat");
+        assert_eq!(heap_profiling_enabled(), expected);
     }
 }
