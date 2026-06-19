@@ -2,28 +2,97 @@
 //!
 //! Her yeni command variant **breaking change** sayılmaz (`#[non_exhaustive]` +
 //! Rust tarafı default'a düşer). Ancak Rust tarafı yeni variant handle etmek
-//! zorundadır — `DefaultIpcRouter` default olarak `Unimplemented` döner.
+//! zorundadır — `DefaultIpcRouter` default olarak
+//! [`IpcCommandError::Unimplemented`] döner.
+//!
+//! # Protocol
+//!
+//! Serde tagged enum:
+//! ```json
+//! {"type": "GetUnreadCount", "data": {"guild_id": null}}
+//! ```
+//!
+//! **Tüm command'lar async** (handler `async fn`). JS tarafı her zaman
+//! `await viscos.invoke(cmd)` ile çağırır.
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::IpcCommandError;
+
 /// Frontend → Backend pull-based komut.
 ///
-/// Faz 1.0'da sadece iskelet. Faz 2+'da `AuthLogin`, `SendMessage`, `LoadHistory`
-/// gibi Discord API'ye bağlı komutlar eklenecek.
-///
-/// # Protocol
-///
-/// Serde tagged enum:
-/// ```json
-/// {"type": "GetUnreadCount", "data": {"guild_id": null}}
-/// ```
-///
-/// **Tüm command'lar async** (handler `async fn`). JS tarafı her zaman
-/// `await viscos.invoke(cmd)` ile çağırır.
+/// `#[non_exhaustive]` — yeni varyant eklemek non-breaking. Tüketici kodu
+/// `_ =>` kolu bulundurmalı. Detaylar için [`crate::types`] modülüne bak.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 #[non_exhaustive]
 pub enum IpcCommand {
+    // -----------------------------------------------------------------------
+    // Auth (Faz 2.0 1b)
+    // -----------------------------------------------------------------------
+    /// Login başlat — token'ı validate et ve gateway connect tetikle.
+    LoginRequest {
+        /// Keyring'den okunacak mevcut kullanıcı token'ı (keyring boşsa
+        /// explicit token geçilebilir).
+        token: Option<String>,
+    },
+    /// Oturumu kapat — token'ı keyring'den sil, gateway disconnect.
+    Logout {},
+
+    // -----------------------------------------------------------------------
+    // Guild + channel metadata (Faz 3.0)
+    // -----------------------------------------------------------------------
+    /// Kullanıcının guild listesi (REST + cache merge).
+    GetGuildList {},
+    /// Belirli bir guild'in kanal listesi.
+    GetChannelList {
+        /// Discord guild snowflake.
+        guild_id: u64,
+    },
+
+    // -----------------------------------------------------------------------
+    // Messages (Faz 3.0)
+    // -----------------------------------------------------------------------
+    /// Bir kanaldaki son mesajları getir (cache öncelikli, REST fallback).
+    GetMessages {
+        /// Discord channel snowflake.
+        channel_id: u64,
+        /// Max mesaj sayısı (1..=100).
+        limit: u16,
+    },
+    /// Yeni mesaj gönder (REST POST /channels/{id}/messages).
+    SendMessage {
+        /// Discord channel snowflake.
+        channel_id: u64,
+        /// Mesaj içeriği (markdown).
+        content: String,
+    },
+    /// Kanalda yazıyor göstergesi tetikle (REST POST /channels/{id}/typing).
+    TriggerTyping {
+        /// Discord channel snowflake.
+        channel_id: u64,
+    },
+    /// Mesaj draft'ını autosave et (periyodik, watchdog tetiklemeli).
+    SaveMessageDraft {
+        /// Discord channel snowflake.
+        channel_id: u64,
+        /// Taslak içerik.
+        content: String,
+    },
+    /// Kaydedilmiş draft'ı iptal et.
+    CancelMessageDraft {
+        /// Discord channel snowflake.
+        channel_id: u64,
+    },
+    /// Kanalı okundu olarak işaretle (mention badge sıfırla).
+    MarkChannelRead {
+        /// Discord channel snowflake.
+        channel_id: u64,
+    },
+
+    // -----------------------------------------------------------------------
+    // Phase-1 iskelet komutları (geriye uyumluluk)
+    // -----------------------------------------------------------------------
     /// Belirli guild veya tümü için okunmamış mesaj sayısı.
     ///
     /// `guild_id = None` → tüm guild'ler. `Some(id)` → yalnızca o guild.
@@ -31,37 +100,22 @@ pub enum IpcCommand {
         /// Discord guild snowflake. `None` = aggregate.
         guild_id: Option<u64>,
     },
-
     /// Frontend'i belirli bir URL'e yönlendir.
     Navigate {
         /// Hedef URL (örn. Discord kanal deep-link).
         url: String,
     },
-
     /// Tema değiştir (`"dark"` | `"light"`).
     SetTheme {
         /// Tema adı.
         theme: String,
     },
-    // Faz 2+'da genişletilecek komutlar:
-    // - `SendMessage { channel_id, content }`
-    // - `LoadHistory { channel_id, before, limit }`
-    // - `MarkRead { channel_id, message_id }`
-    // - `AuthLogin { token }` (Faz 2.0)
-    // - `AuthLogout {}`
-    // - `OpenSettings { section }`
-    //
-    // Not: Bu doc comment listesi Faz 2+'da eklenecek variant'ları gösterir;
-    // enum #[non_exhaustive] olduğu için burada tanımlanmaları şart değil.
-    //
-    // Faz 2+'da `IpcCommand::SendMessage { ... }` gibi yeni variant'lar eklenecek.
-    // Bu satırlar sadece plan referansı.
 }
 
 /// Komut için handler trait.
 ///
 /// Async — JS tarafı `await` ile bekler. Default implementasyon
-/// `ViscosError::Unimplemented` döner; bu sayede yeni command eklendiğinde
+/// `IpcCommandError::Unimplemented` döner; bu sayede yeni command eklendiğinde
 /// implementasyon gecikse bile router compile olur.
 #[async_trait::async_trait]
 pub trait IpcHandler: Send + Sync {
@@ -69,9 +123,10 @@ pub trait IpcHandler: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Her zaman `ViscosError::Unimplemented("phase-X.Y feature")` Faz 1.0'da.
-    /// Faz 2+'da Discord API hataları, rate-limit, vb.
-    async fn handle(&self, cmd: IpcCommand) -> viscos_error::Result<serde_json::Value>;
+    /// Default implementasyon `IpcCommandError::Unimplemented(...)` döner.
+    /// Faz 2+'da Discord API hataları, rate-limit, payload decode hataları
+    /// typed olarak yüzeye çıkar.
+    async fn handle(&self, cmd: IpcCommand) -> Result<serde_json::Value, IpcCommandError>;
 }
 
 #[cfg(test)]
@@ -106,5 +161,63 @@ mod tests {
         // `#[non_exhaustive]` olduğu için dışarıdan exhaustive match derlenmez.
         // Burada sadece oluşturma testi.
         let _ = IpcCommand::GetUnreadCount { guild_id: Some(42) };
+    }
+
+    #[test]
+    fn new_commands_round_trip() {
+        // Faz 3.0 + Faz 5.0 eklenen yeni command varyantları.
+        let send = IpcCommand::SendMessage {
+            channel_id: 123,
+            content: "hello".into(),
+        };
+        let json = serde_json::to_string(&send).unwrap();
+        let back: IpcCommand = serde_json::from_str(&json).unwrap();
+        match back {
+            IpcCommand::SendMessage {
+                channel_id,
+                content,
+            } => {
+                assert_eq!(channel_id, 123);
+                assert_eq!(content, "hello");
+            }
+            _ => panic!("SendMessage round-trip failed"),
+        }
+
+        let cancel = IpcCommand::CancelMessageDraft { channel_id: 7 };
+        let json = serde_json::to_string(&cancel).unwrap();
+        let back: IpcCommand = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            back,
+            IpcCommand::CancelMessageDraft { channel_id: 7 }
+        ));
+
+        let mark = IpcCommand::MarkChannelRead { channel_id: 9 };
+        let json = serde_json::to_string(&mark).unwrap();
+        let back: IpcCommand = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            back,
+            IpcCommand::MarkChannelRead { channel_id: 9 }
+        ));
+    }
+
+    #[test]
+    fn login_request_optional_token_round_trip() {
+        let cmd = IpcCommand::LoginRequest { token: None };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: IpcCommand = serde_json::from_str(&json).unwrap();
+        match back {
+            IpcCommand::LoginRequest { token } => assert!(token.is_none()),
+            _ => panic!("LoginRequest round-trip failed"),
+        }
+
+        let cmd = IpcCommand::LoginRequest {
+            token: Some("xyz".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: IpcCommand = serde_json::from_str(&json).unwrap();
+        match back {
+            IpcCommand::LoginRequest { token } => assert_eq!(token.as_deref(), Some("xyz")),
+            _ => panic!("LoginRequest round-trip failed"),
+        }
     }
 }
