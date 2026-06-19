@@ -24,6 +24,24 @@ pub enum RestartReason {
     Manual,
 }
 
+impl RestartReason {
+    /// Telemetry sink callback'inde kullanılan kararlı string etiketi.
+    ///
+    /// MVP-3: `viscos-telemetry` watchdog'a bağımlılık yaratmaz (cycle riski);
+    /// reason `&str` olarak taşınır. Bu fonksiyon public contract —
+    /// variant adları değişirse telemetry DB'deki eski kayıtlar uyumsuz
+    /// hale gelir, breaking change sayılır.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GdiLeakCritical => "GdiLeakCritical",
+            Self::IpcBufferCritical => "IpcBufferCritical",
+            Self::DisposeFailed => "DisposeFailed",
+            Self::Manual => "Manual",
+        }
+    }
+}
+
 /// Restart sinyali — broadcast channel sarmalayıcı.
 #[derive(Debug, Clone)]
 pub struct RestartSignal {

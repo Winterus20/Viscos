@@ -14,11 +14,12 @@ members = [
     "crates/viscos-cache",
     "crates/viscos-media",
     "crates/viscos-distribution",
+    "crates/viscos-telemetry",
     "crates/viscos",
 ]
 
 # Henüz oluşmayan crate'ler (Faz 4+) — diğer worker'lar kendi fazlarında ekleyecek:
-#    "crates/viscos-telemetry",   # Faz 1.5 — Telemetry Worker
+# (hepsi MVP-3 ile oluşturuldu)
 
 [workspace.package]
 version = "0.1.0"

@@ -6392,6 +6392,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "viscos-telemetry"
+version = "0.1.0"
+dependencies = [
+ "parking_lot 0.12.5",
+ "rusqlite",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "viscos-error",
+]
+
+[[package]]
 name = "viscos-watchdog"
 version = "0.1.0"
 dependencies = [
