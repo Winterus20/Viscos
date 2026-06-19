@@ -1,0 +1,137 @@
+# Viscos CEF backend feature matrix — Faz 1.6 Dalga 1b
+#
+# Bu workflow `viscos-webview/cef-backend` feature ON/OFF matrisinde build
+# + test + binary size gate yapar. PR-2 acceptance criteria:
+#
+# 1. Default build (`cargo build`): WebView2 + CEF stub, hiçbir CEF derleme
+#    aracı (CMake/Ninja/Windows SDK) gerektirmez, binary ≤ 30 MB.
+# 2. CEF feature ON (`cargo build --features viscos-webview/cef-backend`):
+#    Gerçek `cef::BrowserHost::CreateBrowser` wiring + `libcef.dll` discovery.
+#    Binary ≤ 320 MB (Chromium 148.x + `cef-rs` glue + sandbox).
+# 3. test-cef-mock feature ON: mock `CefBrowser` handle test'i yeşil.
+#
+# ADR-0012 §4 (CEF default rollout, telemetry-driven), Faz 1.6 plan.
+# Windows-only: CEF feature sadece cfg(windows) target'ta compile edilir
+# (`cef` optional dep + `#[cfg(feature = "cef-backend")]` gates).
+
+name: CEF backend matrix
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  DEFAULT_BINARY_LIMIT_MB: "30"
+  CEF_BINARY_LIMIT_MB: "320"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # ─── 1. Default build (cef-backend OFF) — cross-platform smoke ───
+  default-build:
+    name: Default build (CEF stub)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: cargo check (default features)
+        run: cargo check --workspace --all-targets --locked
+      - name: cargo test (default features, CEF stub)
+        run: cargo test --workspace --locked
+      # Binary size gate yalnızca Windows'ta anlamlı (linux'ta viscos binary
+      # üretilmiyor; cross-platform `cargo check` yeterli).
+      - name: Default binary size gate
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cargo build --release --bin viscos --locked
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          MAX=$(( ${DEFAULT_BINARY_LIMIT_MB} * 1024 * 1024 ))
+          echo "Default binary size: $SIZE bytes (max $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::Default binary $SIZE > ${DEFAULT_BINARY_LIMIT_MB} MB"
+            exit 1
+          fi
+
+  # ─── 2. CEF backend feature ON — Windows only (CMake + Ninja + SDK) ─
+  cef-backend-windows:
+    name: CEF backend (Windows, feature ON)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # CEF glue katmanı CMake üzerinden derlenir; system PATH'e eklemek
+      # `cef-rs` build.rs'ın doğru toolchain bulmasını garantiler.
+      - name: Install CMake + Ninja
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: 3.27.7
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Verify build prerequisites
+        shell: bash
+        run: |
+          cmake --version
+          ninja --version
+      - name: cargo check (cef-backend feature ON)
+        run: >
+          cargo check -p viscos-webview
+          --features viscos-webview/cef-backend
+          --no-default-features
+          --locked
+      - name: cargo build (cef-backend feature ON, release)
+        run: >
+          cargo build --release
+          --features viscos-webview/cef-backend
+          --bin viscos
+          --locked
+      - name: CEF binary size gate
+        shell: bash
+        run: |
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          MAX=$(( ${CEF_BINARY_LIMIT_MB} * 1024 * 1024 ))
+          echo "CEF binary size: $SIZE bytes (max $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::CEF binary $SIZE > ${CEF_BINARY_LIMIT_MB} MB"
+            exit 1
+          fi
+
+  # ─── 3. test-cef-mock feature ON — DLL mock fixture ile smoke test ─
+  test-cef-mock:
+    name: CEF mock (test-cef-mock feature)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Create fake CEF runtime fixture
+        shell: bash
+        run: |
+          bash crates/viscos-webview/tests/fixtures/cef_fake.sh "$RUNNER_TEMP/cef-fake"
+          ls -la "$RUNNER_TEMP/cef-fake"
+      - name: cargo test (test-cef-mock feature)
+        env:
+          APPDATA: ${{ runner.temp }}\cef-fake-appdata
+        run: >
+          cargo test -p viscos-webview
+          --features viscos-webview/test-cef-mock
+          --locked
+          -- --nocapture

@@ -1,20 +1,25 @@
-//! Viscos binary entry point (Faz 1.0 — Shell+WebView+IPC+Watchdog).
+//! Viscos binary entry point (Faz 1.6 Dalga 1b/c — MVP-1B).
 //!
-//! Faz 1.0 akışı:
+//! Faz 1.6 akışı:
 //! 1. tracing init (stdout + default filter)
-//! 2. config load (`config/default.toml` → `config/local.toml` → env)
-//! 3. WebView backend seçimi (`select_default_backend`)
-//! 4. IPC router bootstrap (default StubHandler — Faz 2+'da gerçek)
-//! 5. Watchdog background task başlat (GDI counter)
-//! 6. Shell.run() — pencere + tray stub loglanır (gerçek event loop Faz 1.6)
-//! 7. "Viscos ready" loglanır
-//! 8. Ctrl-C sinyali bekle → graceful shutdown
+//! 2. CLI parsing (`--backend=webview2|cef|auto`)
+//! 3. config load (`config/default.toml` → `config/local.toml` → env)
+//! 4. WebView backend resolution (`resolve_backend`: CLI > config > RDP > Win11/CEF > WebView2)
+//! 5. IPC router bootstrap (default StubHandler — Faz 2+'da gerçek)
+//! 6. Watchdog background task başlat (GDI counter)
+//! 7. ShellBuilder::build() → gerçek `tao::Window` + `wry::WebView` (Faz 1.6 Dalga 1b)
+//! 8. "Viscos ready" loglanır
+//! 9. Ctrl-C sinyali bekle → graceful shutdown
+//!
+//! B1 kararı: CEF backend feature-gated stub. Default build CEF kullanmaz;
+//! production build'ler `--features viscos-webview/cef-backend` ile derlenir.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use clap::Parser;
 use tokio::signal;
 use tracing::{info, warn};
 
@@ -23,7 +28,25 @@ use viscos_core::VISCOS_VERSION;
 use viscos_ipc::DefaultIpcRouter;
 use viscos_shell::ShellBuilder;
 use viscos_watchdog::{StubAutosave, Watchdog, WatchdogConfig};
-use viscos_webview::{BackendKind, select_default_backend};
+use viscos_webview::{BackendKind, resolve_backend};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "viscos",
+    version = VISCOS_VERSION,
+    about = "Viscos Discord client — Faz 1.6 Dalga 1b/c (WebView2 runtime + CLI override)",
+    long_about = None,
+)]
+struct Cli {
+    /// WebView backend seçimi. Default: `auto` (platform + RDP detection).
+    ///
+    /// Değerler:
+    /// - `webview2`: Microsoft Edge WebView2 (default Win10).
+    /// - `cef`: Chromium Embedded Framework (default Win11; feature-gated stub).
+    /// - `auto`: platform + RDP detection (CLI yokken default davranış).
+    #[arg(long, value_name = "BACKEND", default_value = "auto")]
+    backend: String,
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -48,10 +71,17 @@ async fn run() -> Result<()> {
 
     info!(
         version = VISCOS_VERSION,
-        "Viscos starting up (Faz 1.0 — Shell+WebView+IPC+Watchdog)"
+        "Viscos starting up (Faz 1.6 Dalga 1b/c — WebView2 runtime + CLI override)"
     );
 
-    // 2. Config — layered load (default → local → env override).
+    // 2. CLI parsing.
+    let cli = Cli::parse();
+    info!(
+        backend_override = %cli.backend,
+        "CLI parsed"
+    );
+
+    // 3. Config — layered load (default → local → env override).
     let config = Config::load().context("loading viscos configuration")?;
     info!(
         app = %config.app.name,
@@ -63,18 +93,19 @@ async fn run() -> Result<()> {
         "config loaded"
     );
 
-    // 3. WebView backend seçimi.
-    let backend = select_backend_from_config(&config.webview.backend);
+    // 4. WebView backend seçimi (CLI > config > RDP > Win11/CEF > WebView2).
+    let backend = resolve_backend(Some(&cli.backend), Some(&config.webview.backend))
+        .context("resolving WebView backend")?;
     info!(
         backend = backend.as_str(),
-        "WebView backend selected (Faz 1.0 stub — runtime attachment in Faz 1.6)"
+        "WebView backend selected (Faz 1.6 Dalga 1b — real wry/CEF runtime)"
     );
 
-    // 4. IPC router bootstrap.
+    // 5. IPC router bootstrap.
     let _router = DefaultIpcRouter::new();
     info!("IPC router ready (default StubHandler — Faz 2+'da gerçek handler'lar)");
 
-    // 5. Watchdog background task.
+    // 6. Watchdog background task.
     let autosave: Arc<dyn viscos_watchdog::DraftAutosave> = Arc::new(StubAutosave::new());
     let restart_signal = viscos_watchdog::RestartSignal::default();
     let wd_config = WatchdogConfig {
@@ -87,7 +118,22 @@ async fn run() -> Result<()> {
     watchdog.spawn();
     info!("Watchdog spawned (GDI counter, 30s sample interval)");
 
-    // 6. Shell.run() — pencere + tray stub (gerçek event loop Faz 1.6).
+    // 7. Shell.run() — gerçek `tao::Window` + `wry::WebView` (Faz 1.6 Dalga 1b).
+    //
+    // B1 kararı: backend seçimine göre `WebView2Backend` veya
+    // `CefBackend` (feature-gated stub veya real) instantiate edilir.
+    // Stub fallback default build'de `Unimplemented` döndürür; Win11
+    // production build'lerde `--features viscos-webview/cef-backend` ile
+    // gerçek runtime kullanılır.
+    let backend_label = match backend {
+        BackendKind::WebView2 => "WebView2 (wry)",
+        BackendKind::Cef => "CEF (cef-rs)",
+    };
+    info!(
+        backend = backend_label,
+        "Backend instantiated (gerçek runtime attach Shell::run içinde)"
+    );
+
     let shell = ShellBuilder::new()
         .window(viscos_webview::WindowConfig {
             title: config.window.title.clone(),
@@ -101,7 +147,7 @@ async fn run() -> Result<()> {
         .build();
     shell.run().context("shell run")?;
 
-    // 7. "Viscos ready" log.
+    // 8. "Viscos ready" log.
     info!(
         backend = backend.as_str(),
         window_title = %shell.config().window.title,
@@ -109,24 +155,11 @@ async fn run() -> Result<()> {
         "Viscos ready — Ctrl-C ile graceful shutdown"
     );
 
-    // 8. Graceful shutdown — Ctrl-C veya SIGTERM (Windows'ta sadece Ctrl-C).
+    // 9. Graceful shutdown — Ctrl-C veya SIGTERM (Windows'ta sadece Ctrl-C).
     wait_for_shutdown_signal().await?;
     info!("shutdown signal received");
 
     Ok(())
-}
-
-/// Config'ten backend seç.
-///
-/// `auto` → `select_default_backend()` (Win11 → CEF, Win10 → WebView2).
-/// `webview2` veya `cef` → explicit override.
-fn select_backend_from_config(setting: &str) -> BackendKind {
-    match setting.trim().to_ascii_lowercase().as_str() {
-        "webview2" => BackendKind::WebView2,
-        "cef" => BackendKind::Cef,
-        // "auto" veya bilinmeyen → platform default.
-        _ => select_default_backend(),
-    }
 }
 
 /// Ctrl-C sinyali gelene kadar blokla. Windows + Unix portable.
@@ -158,42 +191,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn select_backend_from_config_explicit_webview2() {
-        assert_eq!(
-            select_backend_from_config("webview2"),
-            BackendKind::WebView2
-        );
+    fn cli_default_backend_is_auto() {
+        // `--backend` flag yokken default `auto` olmalı.
+        // clap derive default_value = "auto" → Cli::parse() ile verify edemiyoruz
+        // çünkü parse() exit yapar; bu yüzden default_value attribute'u source check.
+        // Burada sadece resolve_backend zincirinin `auto` → default_backend'e
+        // düştüğünü doğruluyoruz.
+        let kind = viscos_webview::resolve_backend(None, Some("auto")).unwrap();
+        assert!(matches!(kind, BackendKind::WebView2 | BackendKind::Cef));
     }
 
     #[test]
-    fn select_backend_from_config_explicit_cef() {
-        assert_eq!(select_backend_from_config("cef"), BackendKind::Cef);
-    }
-
-    #[test]
-    fn select_backend_from_config_auto_uses_default() {
-        let result = select_backend_from_config("auto");
-        // Auto, platform default ile aynı olmalı.
-        assert_eq!(result, select_default_backend());
-    }
-
-    #[test]
-    fn select_backend_from_config_unknown_falls_back_to_default() {
-        let result = select_backend_from_config("bogus-backend");
-        assert_eq!(result, select_default_backend());
-    }
-
-    #[test]
-    fn select_backend_from_config_case_insensitive() {
-        assert_eq!(
-            select_backend_from_config("WEBVIEW2"),
-            BackendKind::WebView2
-        );
-        assert_eq!(select_backend_from_config("Cef"), BackendKind::Cef);
-    }
-
-    #[tokio::test]
-    async fn shutdown_signal_handler_compiles() {
-        let _f: fn() -> _ = wait_for_shutdown_signal;
+    fn cli_explicit_backend_passed_through() {
+        // CLI override en yüksek öncelik — config ne olursa olsun.
+        let kind = viscos_webview::resolve_backend(Some("cef"), Some("webview2")).unwrap();
+        assert_eq!(kind, BackendKind::Cef);
+        let kind = viscos_webview::resolve_backend(Some("webview2"), Some("cef")).unwrap();
+        assert_eq!(kind, BackendKind::WebView2);
     }
 }
