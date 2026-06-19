@@ -30,8 +30,20 @@ parking_lot = { workspace = true }
 notify-rust = { version = "4", default-features = false }
 
 # Faz 6.0 — Global + window hotkeys
-global-hotkey = "0.6"
+# `global-hotkey 0.6` provides OS-wide hotkey registration on Windows/macOS/Linux.
+# MVP-3 default-features = false → platform-aware minimal feature set.
+# Scope decision (PR-4): `Human Decision Required` per .cursorrules §4 — new
+# external dependency; landed in main on commit `368bb34` (`feat(telemetry)`)
+# by PR-1 but usage is widened here to WASAPI mute bind.
+global-hotkey = { version = "0.6", default-features = false }
 muda = "0.15"
+
+# Faz 5.0 — System tray icon + badge.
+# `tray-icon 0.19` is the de-facto Rust tray crate (cross-platform; tao 0.35
+# removed its built-in tray feature in favor of this library).
+# MVP-3 scope: badge text only; real menu interaction is Faz 5.0+.
+# Scope decision (PR-4): `Human Decision Required` per .cursorrules §4.
+tray-icon = { version = "0.19", default-features = false }
 
 # Faz 6.0 — Windows auto-start (HKCU\...\Run registry)
 auto-launch = "0.5"
@@ -42,3 +54,18 @@ single-instance = "0.3"
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tempfile = { workspace = true }
+
+# Faz 5.0/6.0 — Windows WASAPI + tray FFI (PR-4).
+# `Win32_Media_Audio` adds `IAudioEndpointVolume` for per-endpoint mute control
+# (mic + speaker). `Win32_System_Com` is needed for `CoCreateInstance` /
+# `CoInitializeEx` / `IMMDeviceEnumerator`. `Win32_Media_Audio_Endpoints`
+# exposes the `IAudioEndpointVolume` interface itself. Other features are
+# intentionally disabled — minimum surface area.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+] }

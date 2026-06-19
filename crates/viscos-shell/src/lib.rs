@@ -34,7 +34,9 @@ pub mod native;
 pub mod window;
 
 pub use frame_timer::{FrameStats, FrameTimer};
-pub use window::{ResizeObserver, Shell, ShellBuilder, ShellConfig, TrayMenu, TrayMenuItem};
+pub use window::{
+    ResizeObserver, Shell, ShellBuilder, ShellConfig, TrayMenu, TrayMenuItem, TrayState,
+};
 
 /// Faz 1.0 — `iced 0.14` spike durumu.
 ///
