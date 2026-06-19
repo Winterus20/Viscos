@@ -14,6 +14,14 @@ pub enum CacheError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    /// JSON payload shape mismatch (Discord Gateway payload → `Message` adapter).
+    #[error("json error: {0}")]
+    Json(String),
+
+    /// I/O hatası (parent dir create, file read, vb.).
+    #[error("io error: {0}")]
+    Io(String),
+
     /// Connection pool hatası (r2d2). Genelde pool exhausted veya connection broken.
     #[error("connection pool error: {0}")]
     Pool(String),
@@ -25,6 +33,10 @@ pub enum CacheError {
     /// moka cache hatası (genelde nadir — capacity invalid, vb.).
     #[error("moka cache error: {0}")]
     Moka(String),
+
+    /// Tokio task join hatası (spawn_blocking panic / cancellation).
+    #[error("task join error: {0}")]
+    Join(String),
 
     /// Config parse hatası (örn. `CacheTiers` from TOML).
     #[error("config error: {0}")]
@@ -43,6 +55,12 @@ impl From<r2d2::Error> for CacheError {
 impl From<refinery::Error> for CacheError {
     fn from(err: refinery::Error) -> Self {
         Self::Migration(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for CacheError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err.to_string())
     }
 }
 
