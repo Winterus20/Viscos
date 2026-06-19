@@ -30,7 +30,7 @@ pub mod watchdog;
 pub use autosave::{DraftAutosave, StubAutosave};
 pub use gdi::{GdiCounter, GdiSample};
 pub use restart::{RestartReason, RestartSignal};
-pub use watchdog::{Watchdog, WatchdogConfig};
+pub use watchdog::{TelemetrySink, Watchdog, WatchdogConfig};
 
 /// Default sample interval (30s).
 pub const DEFAULT_SAMPLE_INTERVAL_SECS: u64 = 30;
