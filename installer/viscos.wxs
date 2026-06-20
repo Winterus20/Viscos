@@ -2,36 +2,59 @@
 <!--
   Viscos MSI installer template (WiX 3).
 
-  Faz 8.0 — sadece iskelet. Gerçek build release engineering sırasında
-  `cargo wix init` ile scaffold edilip bu template üzerine genişletilecek.
+  Faz 1.6 Dalga 1b + Faz 8.0 — BACKEND preprocessor ile iki ayrı MSI:
+    - BACKEND=WebView2  → viscos-webview2-<ver>-x86_64.msi (Win10 default, ~25 MB)
+    - BACKEND=Cef       → viscos-cef-<ver>-x86_64.msi (Win11 default, ~250 MB)
 
   Build:
-    cargo install cargo-wix
-    cargo wix init
-    cargo wix (nocapture)
-    Output: target/wix/viscos-0.1.0-x86_64.msi
+    # WebView2 (default)
+    pwsh -File installer/build-installer.ps1 -Backend WebView2
 
-  TODO(release-engineering): replace `PUT-GUID-HERE` placeholder below with
-  a stable GUID generated via `uuidgen` veya PowerShell `[guid]::NewGuid()`.
+    # CEF (Win11 default, feature-gated build)
+    pwsh -File installer/build-installer.ps1 -Backend Cef
+
+    # With code signing (Faz 8.0 release engineering)
+    pwsh -File installer/build-installer.ps1 -Backend WebView2 -Sign -CertPath .\viscos.pfx -CertPassword <pw>
+
+  TODO(release-engineering): replace `00000000-0000-0000-0000-000000000000` below
+  with a stable UpgradeCode GUID generated via:
+      [guid]::NewGuid()    # PowerShell
   UpgradeCode bir kez belirlenip ASLA değişmemelidir — major upgrade tracking
   bu GUID üzerinden yapılır.
+
+  Conditional CEF components: `<?if $(env.BACKEND) = "Cef" ?>` preprocessor
+  ile CEF runtime dosyaları sadece Cef build'inde dahil edilir.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <?if $(env.BACKEND) = "Cef" ?>
+    <?define ProductDisplayName = "Viscos (CEF Edition)" ?>
+    <?define ProductDescription = "Viscos Discord client with Chromium Embedded Framework backend (Win11 default). Includes libcef.dll + CEF runtime." ?>
+  <?else?>
+    <?define ProductDisplayName = "Viscos" ?>
+    <?define ProductDescription = "Viscos Discord client with WebView2 backend (Win10 default, lightweight)." ?>
+  <?endif?>
+
   <Product Id="*"
-           Name="Viscos"
-           Version="0.1.0"
+           Name="$(var.ProductDisplayName)"
+           Version="$(var.ProductVersion)"
            Manufacturer="Viscos Project"
-           UpgradeCode="PUT-GUID-HERE">
+           UpgradeCode="00000000-0000-0000-0000-000000000000">
 
     <Package InstallerVersion="500"
              Compressed="yes"
-             InstallScope="perMachine" />
+             InstallScope="perMachine"
+             Description="$(var.ProductDescription)" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Viscos is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Feature Id="ProductFeature" Title="Viscos" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+
+      <?if $(env.BACKEND) = "Cef" ?>
+      <ComponentGroupRef Id="CefRuntimeComponents" />
+      <?endif?>
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -45,6 +68,38 @@
         <File Source="$(var.CargoTargetDir)\release\viscos.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
+
+    <?if $(env.BACKEND) = "Cef" ?>
+    <!--
+      CEF runtime bundle — Win11 default backend (ADR-0012 §6).
+      Faz 1.6 release engineering sonrası libcef.dll + locales + resources
+      ~220-300 MB bundle dahil edilir. Faz 8.5 self-update CefUpdater
+      bundle'ı kendi cache_dir altında tutar.
+    -->
+    <ComponentGroup Id="CefRuntimeComponents" Directory="INSTALLDIR">
+      <Component Id="CefRuntimeLib" Guid="*">
+        <File Source="$(var.CargoTargetDir)\release\libcef.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CefRuntimeSnapshot" Guid="*">
+        <File Source="$(var.CargoTargetDir)\release\snapshot.bin" />
+      </Component>
+      <Component Id="CefRuntimeV8Snapshot" Guid="*">
+        <File Source="$(var.CargoTargetDir)\release\v8_snapshot.bin" />
+      </Component>
+    </ComponentGroup>
+    <?endif?>
+
+    <!--
+      Signtool step (skeleton, no-op in stub mode).
+      Faz 8.0 release engineering: real signtool invocation WiX CustomAction
+      veya InstallExecuteSequence'de <Custom Action="SignViscos"... /> ile
+      tetiklenir. Stub mode'da sadece property tanımı kalır.
+    -->
+    <Property Id="VISCOS_SIGNTOOL_INVOKED" Value="false" Secure="yes" />
+
+    <InstallExecuteSequence>
+      <!-- Stub: real signtool CustomAction Faz 8.0 release engineering. -->
+    </InstallExecuteSequence>
 
   </Product>
 </Wix>

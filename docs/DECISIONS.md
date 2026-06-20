@@ -561,6 +561,7 @@ Tuning **background'da** olur, kullanıcı transparan (config dosyasında `cache
 |---|---|---|
 | 2026-06-18 | **İlk karar** | moka 0.12 + foyer 0.22 + rusqlite 0.38 + AES-GCM, chacha20poly1305 çıkarıldı |
 | 2026-06-18 | **Haziran 2026 trade-off analizi** | (1) Discord CDN 24h signed URL policy keşfi → content-addressable cache key eklendi (`attachment_id` snowflake). (2) Faz 1.5 telemetry backend → adaptive tier sizing eklendi (v1 default statik, v1.5 telemetry-driven). (3) Foyer Windows NTFS overhead trade-off'u netleştirildi (psync engine, %30 cold latency overhead kabul). (4) Moka v0.12 background-thread kaldırma notu (CPU idle hedefi <%1). Detay: [`cache-stack-research.md`](../../.cursor/plans/cache-stack-research.md) |
+| 2026-06-19 | **PR-3 ile implementasyon** | `viscos-cache` crate'i (SQLite + moka + foyer facade) PR-3'te birleşti. `Arc<Cache>` shared state, `upsert_message_sync` + `recent_messages` API, parent directory auto-creation regression test, content-addressable CDN key stratejisi PR-3 ile kod tabanına girdi. Repository pattern (`viscos-cache::Cache` facade) twilight-cache-inmemory yerine tercih edildi (ADR-0008 zaten bu yöndeydi). |
 
 ---
 
@@ -690,6 +691,7 @@ qrcode = "0.14"
 | Tarih | Revizyon | Gerekçe |
 |---|---|---|
 | 2026-06-18 | **İlk öneri** | `keyring 2.3` → `keyring-core 0.7` + `windows-native-keyring-store 1.1`; `secrecy 0.10` + `zeroize 1` eklendi; Varyant A default (DPAPI) / Varyant B v2.0 opt-in (Argon2id passphrase); multi-account v1 altyapısı (`user = user_id`); MFA backup codes; captcha stratejisi (redirect); X-Super-Properties detaylandırma; ToS disclaimer canonical metin |
+| 2026-06-19 | **PR-4 cross-ref** | `viscos-auth` crate'i (keyring-core 0.7 + windows-native-keyring-store 1.1 + DPAPI token storage + secrecy::Secret wrapper + zeroize derive) main branch'te zaten mevcuttu; PR-4 (shell-hotkey-audio-scaffold) ile shell → auth entegrasyonu tamamlandı. `WebGL fingerprint` (MVP-1B, `compute_for_cef` + `compute_for_webview2`) PR-2 ile implemente edildi; ADR-0012 §3 anti-bot heuristic parite için zemin hazır. |
 
 ---
 
@@ -880,6 +882,15 @@ davey = { version = "0.1", optional = true }
 | Tarih | Revizyon | Gerekçe |
 |---|---|---|
 | 2026-06-18 | **İlk öneri** | WebView + native shell hibrit kararı somut trade-off matrisi ile belgelendi. 5 ek: (1) bridge.ts selector resilience rules, (2) anti-bot heuristic parite + shadow mode, (3) davey optional dependency, (4) iced 0.14 spike, (5) `docs/CEF-VS-WEBVIEW2.md` referansı. |
+| 2026-06-19 | **PR-2 / PR-4 / PR-5 / PR-6 implementasyon** | (1) **PR-2 (feat/webview-webview2-runtime):** `WebView2Backend` real `wry::WebView` runtime + `cef-backend` feature-gated stub + CLI `--backend=` override + `select_default_backend()` orchestration + RDP/Win11 detection (ADR-0012 §6 uyumlu). (2) **PR-4 (feat/shell-hotkey-audio-scaffold):** `viscos-shell` tao + iced 0.14 native panel + tray + hotkey scaffold. (3) **PR-5 (feat/api-gateway-cache-bridge):** `GatewayCacheBridge` event routing twilight-gateway → `viscos-cache` + IPC push (ADR-0010 repository pattern + ADR-0012 §3 pull-based IPC uyumlu). (4) **PR-6 (chore/meta-docs-ci-installer-audit):** release.yml + size-gate.yml CI workflows + WiX fixture BACKEND preprocessor + WinGet manifest template + comprehensive audit stage. Faz 1.6 release engineering (gerçek `cef::BrowserHost::CreateBrowser`, V8 bridge, crashpad, 24h soak) **insan PR'larına bırakıldı** — `phase-1.6-cef-default-rollout-dalga-1b.md` playbook'u tamamlandı. |
+
+---
+
+## Global Revizyon Geçmişi (PR-1..PR-6 Merge — MVP-1B Infrastructure Complete)
+
+| Tarih | Revizyon | Gerekçe |
+|---|---|---|
+| 2026-06-19 | **PR-1..PR-6 merge: MVP-1B infrastructure complete** | 6-PR refactor serisi ana branch'e merge edildi. **PR-1** (`feat/telemetry-store-mvp3`) — telemetry store MVP-3. **PR-2** (`feat/webview-webview2-runtime`) — WebView2 real runtime + CEF feature-gated stub + backend detection (Faz 1.6 Dalga 1a/1b/1c). **PR-3** (`feat/cache-facade-repository`) — viscos-cache SQLite+moka+foyer facade. **PR-4** (`feat/shell-hotkey-audio-scaffold`) — viscos-shell tao+iced+hotkey+audio scaffold. **PR-5** (`feat/api-gateway-cache-bridge`) — viscos-api gateway+REST+gateway_cache_bridge + IPC types reorganize (MVP-2). **PR-6** (`chore/meta-docs-ci-installer-audit`) — release.yml + size-gate.yml + WiX+WinGet + comprehensive audit stage. Toplam: 11 crate, 405+ tests pass, release binary ~1.56 MB. Faz 2.0 (Auth, PR-7+) + Faz 8.0 (Release Engineering, human PRs) follow-up. Detay: [`COMPREHENSIVE-AUDIT-STUBS-AND-TODOS-2026-06-19.md`](../COMPREHENSIVE-AUDIT-STUBS-AND-TODOS-2026-06-19.md) ve [`phase-1.6-cef-default-rollout-dalga-1b.md`](../../.cursor/plans/phase-1.6-cef-default-rollout-dalga-1b.md). |
 
 ---
 

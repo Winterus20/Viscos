@@ -1,0 +1,251 @@
+# Viscos PR Size Gate — catch binary bloat regression
+#
+# Trigger: pull_request (main).
+#
+# Builds WebView2 + CEF (matrix) release binaries and verifies that
+# each stays within its size budget. PR'a yorum bırakır; bütçe aşılırsa
+# fail eder (binary bloat regression'ı PR'da yakalanır, main'e sızmadan).
+#
+# Bütçe: master index §6 + viscos_index.md "hedef metrikler".
+# - WebView2 release binary: ≤ 30 MB (release profile, lto=fat)
+# - CEF release binary: ≤ 320 MB (CEF runtime bundle dahil)
+
+name: Size Gate
+
+on:
+  pull_request:
+    branches: [main]
+  # Weekly scheduled run for early regression detection.
+  schedule:
+    - cron: "0 7 * * 1"  # Pazartesi 07:00 UTC
+
+concurrency:
+  group: size-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  WV2_LIMIT_MB: "30"
+  CEF_LIMIT_MB: "320"
+
+jobs:
+  # ─── 1. WebView2 size gate ───────────────────────────────────
+  size-gate-webview2:
+    name: WebView2 ≤ ${WV2_LIMIT_MB} MB
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Build WebView2 release binary
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        run: cargo build --release --locked --bin viscos 2>&1 | tee build-wv2.log
+
+      - name: Compute binary size
+        id: size
+        shell: bash
+        run: |
+          if [ ! -f target/release/viscos.exe ]; then
+            echo "::error::target/release/viscos.exe bulunamadı — build başarısız."
+            exit 1
+          fi
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          SIZE_MB=$(awk "BEGIN { printf \"%.2f\", $SIZE / 1048576 }")
+          echo "size_bytes=$SIZE" >> $GITHUB_OUTPUT
+          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
+          echo "WebView2 binary: $SIZE bayt ($SIZE_MB MB)"
+
+      - name: Size gate check
+        shell: bash
+        env:
+          LIMIT_MB: ${{ env.WV2_LIMIT_MB }}
+          ACTUAL_BYTES: ${{ steps.size.outputs.size_bytes }}
+          ACTUAL_MB: ${{ steps.size.outputs.size_mb }}
+        run: |
+          MAX=$(( ${LIMIT_MB} * 1024 * 1024 ))
+          if [ "$ACTUAL_BYTES" -gt "$MAX" ]; then
+            echo "::error::WebView2 binary $ACTUAL_BYTES bayt > ${LIMIT_MB} MB hedefini aştı."
+            echo "::error::Binary bloat regression tespit edildi. LTO/codegen-units/strip ayarlarını gözden geçirin."
+            exit 1
+          fi
+          echo "WebView2 size gate OK: $ACTUAL_MB MB ≤ ${LIMIT_MB} MB."
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viscos-webview2-pr
+          path: target/release/viscos.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─── 2. CEF size gate (matrix feature-gated build) ──────────
+  size-gate-cef:
+    name: CEF ≤ ${CEF_LIMIT_MB} MB
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      # CEF build prerequisites (release engineering env).
+      - name: Install CMake + Ninja
+        uses: lukka/get-cmake@v4
+        with:
+          cmakeVersion: "3.29.x"
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Build CEF release binary (feature-gated)
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        run: cargo build --release --locked --features viscos-webview/cef-backend --bin viscos 2>&1 | tee build-cef.log
+
+      - name: Compute binary size
+        id: size
+        shell: bash
+        run: |
+          if [ ! -f target/release/viscos.exe ]; then
+            echo "::error::target/release/viscos.exe bulunamadı — CEF build başarısız."
+            exit 1
+          fi
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          SIZE_MB=$(awk "BEGIN { printf \"%.2f\", $SIZE / 1048576 }")
+          echo "size_bytes=$SIZE" >> $GITHUB_OUTPUT
+          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
+          echo "CEF binary: $SIZE bayt ($SIZE_MB MB)"
+
+      - name: Size gate check
+        shell: bash
+        env:
+          LIMIT_MB: ${{ env.CEF_LIMIT_MB }}
+          ACTUAL_BYTES: ${{ steps.size.outputs.size_bytes }}
+          ACTUAL_MB: ${{ steps.size.outputs.size_mb }}
+        run: |
+          MAX=$(( ${LIMIT_MB} * 1024 * 1024 ))
+          if [ "$ACTUAL_BYTES" -gt "$MAX" ]; then
+            echo "::error::CEF binary $ACTUAL_BYTES bayt > ${LIMIT_MB} MB hedefini aştı."
+            echo "::error::Binary bloat regression tespit edildi. CEF feature flag'leri / optional dependency'leri gözden geçirin."
+            exit 1
+          fi
+          echo "CEF size gate OK: $ACTUAL_MB MB ≤ ${LIMIT_MB} MB."
+
+      - name: Upload CEF binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viscos-cef-pr
+          path: target/release/viscos.exe
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ─── 3. PR comment summary (diff vs base) ──────────────────
+  pr-summary:
+    name: PR summary comment
+    needs: [size-gate-webview2, size-gate-cef]
+    runs-on: windows-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute base size (for diff)
+        id: base
+        continue-on-error: true
+        shell: bash
+        env:
+          WV2_LIMIT_MB: ${{ env.WV2_LIMIT_MB }}
+          CEF_LIMIT_MB: ${{ env.CEF_LIMIT_MB }}
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE_SHA" ]; then
+            echo "Base SHA yok — diff skip."
+            echo "base_wv2=unknown" >> $GITHUB_OUTPUT
+            echo "base_cef=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          git fetch origin "$BASE_SHA" --depth=1 || true
+          git checkout "$BASE_SHA" -- Cargo.toml Cargo.lock crates/ 2>/dev/null || true
+          cargo build --release --locked --bin viscos 2>&1 | tail -5
+          if [ -f target/release/viscos.exe ]; then
+            WV2_BASE=$(stat -c%s target/release/viscos.exe)
+            WV2_BASE_MB=$(awk "BEGIN { printf \"%.2f\", $WV2_BASE / 1048576 }")
+            echo "base_wv2=${WV2_BASE_MB} MB" >> $GITHUB_OUTPUT
+          else
+            echo "base_wv2=build-failed" >> $GITHUB_OUTPUT
+          fi
+          # CEF base — feature-gated
+          cargo build --release --locked --features viscos-webview/cef-backend --bin viscos 2>&1 | tail -5 || true
+          if [ -f target/release/viscos.exe ]; then
+            CEF_BASE=$(stat -c%s target/release/viscos.exe)
+            CEF_BASE_MB=$(awk "BEGIN { printf \"%.2f\", $CEF_BASE / 1048576 }")
+            echo "base_cef=${CEF_BASE_MB} MB" >> $GITHUB_OUTPUT
+          else
+            echo "base_cef=build-failed" >> $GITHUB_OUTPUT
+          fi
+          # Restore working tree
+          git checkout HEAD -- . 2>/dev/null || true
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const wv2Limit = '${{ env.WV2_LIMIT_MB }}';
+            const cefLimit = '${{ env.CEF_LIMIT_MB }}';
+            const baseWv2 = '${{ steps.base.outputs.base_wv2 || "unknown" }}';
+            const baseCef = '${{ steps.base.outputs.base_cef || "unknown" }}';
+
+            const body = [
+              '## 📦 Size Gate Report',
+              '',
+              '| Backend | Limit | Status |',
+              '|---------|-------|--------|',
+              `| WebView2 | ≤ ${wv2Limit} MB | ✅ PR'da build OK |`,
+              `| CEF (feature-gated) | ≤ ${cefLimit} MB | ✅ PR'da build OK |`,
+              '',
+              '**Base branch binary sizes (for diff):**',
+              `- WebView2: ${baseWv2}`,
+              `- CEF: ${baseCef}`,
+              '',
+              '_Detaylı log: workflow run._'
+            ].join('\n');
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

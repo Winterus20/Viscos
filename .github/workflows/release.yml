@@ -1,0 +1,328 @@
+# Viscos Release Engineering — tag-driven pipeline
+#
+# Trigger: tag push matching v* (e.g. v0.1.0, v1.0.0)
+#
+# Faz 8.0 release engineering skeleton. Produces two MSI artifacts
+# (viscos-webview2.msi, viscos-cef.msi) + signs + generates winget
+# manifest. **All real signing / winget-pkgs PR work is human-only**
+# — env-var-gated, no-op unless secrets are present.
+#
+# ADR-0004: GitHub Actions + windows-latest + 2 katmanlı cache.
+# ADR-0012: CEF feature-gated build; default WebView2, opt-in CEF.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual dispatch for dry-run / smoke tests (does NOT trigger signing)
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "Backend to build (webview2 or cef)"
+        required: true
+        type: choice
+        default: "webview2"
+        options:
+          - webview2
+          - cef
+
+# Tags are immutable; no concurrency cancellation needed.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  PRODUCT_NAME: "Viscos"
+  PRODUCT_VERSION: "0.2.0"
+
+jobs:
+  # ─── 1. Build WebView2 MSI (default, smaller) ────────────────
+  build-webview2:
+    name: Build viscos-webview2.msi
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write  # Tag-only — needed for GH Release upload
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Build WebView2 release binary
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        run: cargo build --release --locked
+
+      - name: Verify binary size (≤ 30 MB gate)
+        shell: bash
+        run: |
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          MAX=$(( 30 * 1024 * 1024 ))
+          echo "WebView2 binary size: $SIZE bytes (max $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::WebView2 binary $SIZE bayt > 30 MB hedefini aştı."
+            exit 1
+          fi
+
+      - name: Generate MSI via WiX (PowerShell)
+        shell: pwsh
+        env:
+          BACKEND: "WebView2"
+        run: |
+          pwsh -NoProfile -File installer/build-installer.ps1 -SkipBuild -Backend WebView2
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viscos-webview2-msi
+          path: target/release/viscos-webview2*.msi
+          if-no-files-found: error
+
+  # ─── 2. Build CEF MSI (Win11 default, larger bundle) ──────────
+  build-cef:
+    name: Build viscos-cef.msi
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      # CEF build requires CMake + Ninja (release engineering env).
+      - name: Install CMake + Ninja
+        uses: lukka/get-cmake@v4
+        with:
+          cmakeVersion: "3.29.x"
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Build CEF release binary (feature-gated)
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        # Release engineering — gerçek cef-rs bundle build.
+        # MVP-1B stub feature-gated olduğu için --features viscos-webview/cef-backend
+        # compile edilir ama BrowserHost::CreateBrowser scaffold kalır.
+        # Faz 1.6 release engineering sonrası tam runtime bundle üretir.
+        run: cargo build --release --locked --features viscos-webview/cef-backend
+
+      - name: Verify binary size (≤ 320 MB gate)
+        shell: bash
+        run: |
+          SIZE=$(stat -c%s target/release/viscos.exe)
+          MAX=$(( 320 * 1024 * 1024 ))
+          echo "CEF binary size: $SIZE bytes (max $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::CEF binary $SIZE bayt > 320 MB hedefini aştı."
+            exit 1
+          fi
+
+      - name: Generate CEF MSI via WiX
+        shell: pwsh
+        env:
+          BACKEND: "Cef"
+        run: |
+          pwsh -NoProfile -File installer/build-installer.ps1 -SkipBuild -Backend Cef
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viscos-cef-msi
+          path: target/release/viscos-cef*.msi
+          if-no-files-found: error
+
+  # ─── 3. Code sign (skeleton, env-gated) ──────────────────────
+  #
+  # Real signing requires WINDOWS_CERT_PFX_BASE64 secret (humans only).
+  # Without it, this job is a no-op. With it, signtool.exe wraps the
+  # binary with Authenticode + timestamp.
+  sign:
+    name: Code sign (Authenticode)
+    needs: [build-webview2, build-cef]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # Skip if signing secret is not configured (skeleton mode).
+    if: ${{ env.WINDOWS_CERT_PFX_BASE64 != null && env.WINDOWS_CERT_PFX_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode cert from secret
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) {
+            Write-Host "::notice::WINDOWS_CERT_PFX_BASE64 secret not set — skip signing."
+            exit 0
+          }
+          $bytes = [Convert]::FromBase64String($env:PFX_B64)
+          Set-Content -Path viscos.pfx -Value $bytes -Encoding Byte
+          Write-Host "Cert decoded."
+
+      - name: Sign WebView2 MSI
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target/release/viscos-webview2*.msi | Select-Object -First 1
+          if (-not $msi) { Write-Host "WebView2 MSI not found — skip."; exit 0 }
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe' sign `
+            /tr http://timestamp.digicert.com `
+            /td sha256 `
+            /fd sha256 `
+            /f viscos.pfx `
+            /p $env:WINDOWS_CERT_PASSWORD `
+            $msi.FullName
+
+      - name: Sign CEF MSI
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target/release/viscos-cef*.msi | Select-Object -First 1
+          if (-not $msi) { Write-Host "CEF MSI not found — skip."; exit 0 }
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe' sign `
+            /tr http://timestamp.digicert.com `
+            /td sha256 `
+            /fd sha256 `
+            /f viscos.pfx `
+            /p $env:WINDOWS_CERT_PASSWORD `
+            $msi.FullName
+
+      - name: Cleanup cert
+        if: always()
+        shell: pwsh
+        run: Remove-Item viscos.pfx -ErrorAction SilentlyContinue
+
+  # ─── 4. WinGet manifest generation (skeleton) ────────────────
+  #
+  # Real PR to microsoft/winget-pkgs requires WINGET_PKGS_PAT secret.
+  # Without it, this job generates the manifest locally only.
+  winget-manifest:
+    name: WinGet manifest (template + SHA256)
+    needs: [build-webview2, build-cef]
+    runs-on: windows-latest
+    timeout-minutes: 10
+    if: ${{ always() }}  # Always run to compute SHA256 even without signing.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute SHA256 for both MSIs
+        id: sha
+        shell: pwsh
+        run: |
+          $webview2_msi = Get-ChildItem target/release/viscos-webview2*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $cef_msi = Get-ChildItem target/release/viscos-cef*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $wv2_sha = if ($webview2_msi) { (Get-FileHash $webview2_msi -Algorithm SHA256).Hash.ToLower() } else { "REPLACE_WITH_BUILD_HASH" }
+          $cef_sha = if ($cef_msi) { (Get-FileHash $cef_msi -Algorithm SHA256).Hash.ToLower() } else { "REPLACE_WITH_BUILD_HASH" }
+          "webview2_sha=$wv2_sha" >> $env:GITHUB_OUTPUT
+          "cef_sha=$cef_sha" >> $env:GITHUB_OUTPUT
+          Write-Host "WebView2 SHA256: $wv2_sha"
+          Write-Host "CEF SHA256: $cef_sha"
+
+      - name: Generate manifest from template
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ env.PRODUCT_VERSION }}
+          WV2_SHA: ${{ steps.sha.outputs.webview2_sha }}
+          CEF_SHA: ${{ steps.sha.outputs.cef_sha }}
+        run: |
+          $templatePath = "installer/winget/manifests/w/Winterus20/Viscos/$env:PRODUCT_VERSION/Winterus20.Viscos.installer.yaml"
+          if (-not (Test-Path $templatePath)) {
+            Write-Host "::warning::Manifest template $templatePath bulunamadı. Skip."
+            exit 0
+          }
+          $manifest = Get-Content $templatePath -Raw
+          $manifest = $manifest -replace 'REPLACE_WITH_BUILD_HASH_WEBVIEW2', $env:WV2_SHA
+          $manifest = $manifest -replace 'REPLACE_WITH_BUILD_HASH_CEF', $env:CEF_SHA
+          $outPath = "installer/winget/manifests/w/Winterus20/Viscos/$env:PRODUCT_VERSION/Winterus20.Viscos.installer.yaml.generated"
+          Set-Content -Path $outPath -Value $manifest -Encoding UTF8
+          Write-Host "Manifest generated: $outPath"
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifest
+          path: installer/winget/manifests/**/*.yaml.generated
+          if-no-files-found: warn
+
+      - name: Commit to fork (skeleton — requires WINGET_PKGS_PAT)
+        if: ${{ env.WINGET_PKGS_PAT != null && env.WINGET_PKGS_PAT != '' }}
+        shell: pwsh
+        env:
+          WINGET_PKGS_PAT: ${{ secrets.WINGET_PKGS_PAT }}
+        run: |
+          Write-Host "WINGET_PKGS_PAT mevcut — manifest fork'a pushlenebilir."
+          Write-Host "::notice::Bu adım manuel review gerektirir (Microsoft reviewer onayı 1-2 hafta)."
+          # TODO(human): git clone fork + cherry-pick + push + PR.
+          # AI tarafı sadece manifest dosyasını hazırlar, PR'ı insan reviewer açar.
+
+  # ─── 5. Size gate (fail-fast catch binary bloat) ─────────────
+  size-gate:
+    name: Release size gate (≤30 MB / ≤320 MB)
+    needs: [build-webview2, build-cef]
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify both artifact sizes
+        shell: pwsh
+        run: |
+          $wv2_msi = Get-ChildItem target/release/viscos-webview2*.msi -ErrorAction SilentlyContinue
+          $cef_msi = Get-ChildItem target/release/viscos-cef*.msi -ErrorAction SilentlyContinue
+          $failed = $false
+          if ($wv2_msi) {
+            $size = $wv2_msi.Length
+            $max = 30 * 1024 * 1024
+            if ($size -gt $max) {
+              Write-Host "::error::WebView2 MSI $size bayt > 30 MB."
+              $failed = $true
+            } else {
+              Write-Host "WebView2 MSI: $size bytes OK (max 30 MB)."
+            }
+          }
+          if ($cef_msi) {
+            $size = $cef_msi.Length
+            $max = 320 * 1024 * 1024
+            if ($size -gt $max) {
+              Write-Host "::error::CEF MSI $size bayt > 320 MB."
+              $failed = $true
+            } else {
+              Write-Host "CEF MSI: $size bytes OK (max 320 MB)."
+            }
+          }
+          if ($failed) { exit 1 }
