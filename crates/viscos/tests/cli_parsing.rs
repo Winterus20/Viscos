@@ -23,7 +23,7 @@ struct TestCli {
 /// CLI → `BackendKind` resolution zincirini verify et.
 fn resolve_from_cli_args(args: &[&str]) -> Result<BackendKind, String> {
     let cli = TestCli::try_parse_from(args).map_err(|e| e.to_string())?;
-    resolve_backend(Some(&cli.backend), None).map_err(|e| e.to_string())
+    resolve_backend(Some(&cli.backend), None, None).map_err(|e| e.to_string())
 }
 
 #[test]

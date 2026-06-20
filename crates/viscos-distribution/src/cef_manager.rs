@@ -106,7 +106,7 @@ impl CefManager {
         match config.webview.backend.as_str() {
             "cef" => CefBackendChoice::Cef,
             "webview2" => CefBackendChoice::WebView2,
-            _ => select_default_backend().into(),
+            _ => select_default_backend(None).into(),
         }
     }
 
@@ -180,7 +180,7 @@ mod tests {
     fn current_backend_matches_select_default_when_auto() {
         let cfg = Config::default();
         let backend = CefManager::current_backend(&cfg);
-        let expected: CefBackendChoice = select_default_backend().into();
+        let expected: CefBackendChoice = select_default_backend(None).into();
         assert_eq!(backend, expected);
     }
 

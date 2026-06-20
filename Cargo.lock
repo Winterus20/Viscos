@@ -6741,6 +6741,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "viscos-error",
+ "viscos-telemetry",
  "windows 0.58.0",
  "windows-version",
  "wry",
