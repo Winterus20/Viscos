@@ -30,7 +30,7 @@ use crate::storage::{AuthError, AuthStorage, StoredAccount, now_unix};
 /// ```rust
 /// use viscos_auth::token::DiscordToken;
 ///
-/// let token = DiscordToken::new("NTkwMjE4.abc.defghijklmnopqrstuvwxyz0123456789abcdefghij");
+/// let token = DiscordToken::new("viscos_example_one.two.three_part_dummy_token_placeholder_aa");
 /// assert!(token.validate_format());
 /// ```
 pub struct DiscordToken(SecretString);

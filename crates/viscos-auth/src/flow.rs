@@ -98,7 +98,7 @@ impl std::fmt::Debug for AuthSession {
 /// use viscos_auth::token::DiscordToken;
 ///
 /// let mgr = AuthManager::new();
-/// let token = DiscordToken::new("NTkwMjE4.abc.defghijklmnopqrstuvwxyz0123456789ab");
+/// let token = DiscordToken::new("viscos_example_one.two.three_part_dummy_token_placeholder_aa");
 /// let session = mgr.authenticate(AuthFlow::TokenPaste { token })?;
 /// # Ok::<_, viscos_auth::storage::AuthError>(())
 /// ```
