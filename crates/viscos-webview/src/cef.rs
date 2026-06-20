@@ -1,7 +1,7 @@
 //! `CefBackend` — CEF (Chromium Embedded Framework) backend.
 //!
 //! Faz 1.0: stub (`Unimplemented`).
-//! Faz 1.6 (B1 kararı): **feature-gated stub + DLL check + subprocess marker.**
+//! Faz 1.6 (B1 kararı): **feature-gated stub + DLL check + subprocess routing.**
 //!
 //! ## Build modları
 //!
@@ -10,13 +10,16 @@
 //! - **Production build** (`cargo build --features viscos-webview/cef-backend`):
 //!   gerçek `cef::BrowserHost::CreateBrowser` çağrısı.
 //!
-//! ## Subprocess routing (Faz 1.6 Dalga 1b — out-of-scope marker)
+//! ## Subprocess routing (Faz 1.6 Dalga 1b)
 //!
-//! `cef::execute_process` ana process'te subprocess dispatch için kullanılır.
-//! `crates/viscos/src/main.rs`'te TODO marker olarak bırakıldı (insan release
-//! engineering — `FOLLOW-UP-REAL-WORLD-WORK.md §B`). Bu crate yalnızca
-//! `cef_subprocess_main_marker()` ile sözleşmeyi dokümante eder; gerçek
-//! subprocess dispatch main.rs'ye aittir.
+//! CEF multi-process mimarisinde ana binary subprocess dispatch için
+//! `cef::execute_process` çağrısı yapar. Çağrı ana thread'in entry
+//! point'inde `cef::initialize`'dan **önce** yapılmalıdır (CEF protokolü).
+//!
+//! Sözleşme:
+//! - `cef::execute_process` ana process'te `-1` döner → `main.rs` devam eder.
+//! - Subprocess'te (renderer, gpu, network, vb.) non-negative exit code →
+//!   `main.rs` çağrıyı propagate edip `std::process::exit` yapar.
 //!
 //! ADR-0012 §4 + Faz 1.6 Dalga 1b plan dosyası.
 
@@ -52,15 +55,80 @@ impl CefBackend {
     }
 }
 
-/// Subprocess routing sözleşmesi (ana binary `main.rs` ile).
+/// CEF subprocess dispatch entry point — `main.rs`'ten çağrılır.
 ///
-/// `main.rs` `cef::execute_process(args)` çağrısını bu marker'ın
-/// `true` olduğu yerde yapar; **out-of-scope** bu PR için (insan
-/// release engineering gerektirir).
+/// CEF multi-process mimarisinde ana binary, subprocess'leri
+/// (renderer, gpu, network, utility, vb.) launch etmek için
+/// `cef::execute_process` çağrısı yapar. Bu çağrı **her** process'te
+/// ana thread'de `cef::initialize`'dan **önce** yapılmalıdır
+/// (CEF protokolü, `_cef_main_args_t` standardı).
+///
+/// # Davranış
+///
+/// - **Ana process (browser):** `cef::execute_process` `-1` döner
+///   ("no recognized subprocess type"). Bu fonksiyon `None` döner;
+///   `main.rs` normal initialization'a devam eder.
+/// - **Subprocess (renderer/gpu/network/vb.):** `cef::execute_process`
+///   `0..=c_int::MAX` arası exit code döner. Bu fonksiyon `Some(code)`
+///   döner; `main.rs` `std::process::exit(code)` ile çıkmalıdır.
+/// - **Feature kapalı (`cef-backend` off):** `None` döner. Stub
+///   branch (default build, CI cross-platform) gerçek `cef` crate'i
+///   link etmez, dolayısıyla subprocess dispatch yoktur.
+///
+/// # Güvenlik
+///
+/// `cef::execute_process` Windows'ta sandbox info pointer alır;
+/// `std::ptr::null_mut()` güvenlidir (sandbox feature sadece CEF
+/// bundle'ında aktive olur; Viscos production'unda default sandbox
+/// disabled'dır, ADR-0012 §4).
 ///
 /// # Returns
 ///
-/// `false` her zaman — gerçek subprocess dispatch main.rs'de.
+/// - `Some(exit_code)` → subprocess tespit edildi, ana process bu
+///   kodla terminate etmeli (CEF subprocess kendi yaşam döngüsünü
+///   tamamlar, sonra `code` döner).
+/// - `None` → ana process veya feature kapalı; devam et.
+#[must_use]
+pub fn execute_process_if_subprocess() -> Option<i32> {
+    #[cfg(feature = "cef-backend")]
+    {
+        // SAFETY: `cef_rs::MainArgs::default()` zero-initialized struct;
+        // Windows'ta command-line argümanları ana thread'in `argv`'i
+        // üzerinden CEF'e geçirilir (`hInstance` Windows entry point'te
+        // taşınır). Subprocess detection CEF'in command-line
+        // `--type=` flag'ini parse etmesine dayanır; default value
+        // subprocess değildir → `-1` döner.
+        let main_args = cef_rs::MainArgs::default();
+        let exit_code = cef_rs::execute_process(Some(&main_args), None, std::ptr::null_mut());
+        if exit_code >= 0 {
+            tracing::info!(
+                exit_code,
+                "CEF subprocess dispatch — main process terminating"
+            );
+            Some(exit_code)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(feature = "cef-backend"))]
+    {
+        // Feature kapalı → stub: hiçbir zaman subprocess değiliz.
+        // CEF runtime link edilmedi, dolayısıyla subprocess routing
+        // yalnızca feature ON build'lerde aktive olur.
+        None
+    }
+}
+
+/// Subprocess routing sözleşme marker'ı (geriye uyumluluk).
+///
+/// `main.rs` bu marker'ı doğrudan kullanmaz; gerçek routing
+/// `execute_process_if_subprocess()` üzerinden — feature-gated.
+/// Marker `false` her zaman `execute_process` çağrısının ana process
+/// tarafından atlandığını dokümante eder (test sözleşmesi).
+///
+/// # Returns
+///
+/// `false` her zaman — ana process'te subprocess dispatch yapılmaz.
 #[must_use]
 pub const fn cef_subprocess_main_marker() -> bool {
     false
@@ -116,7 +184,7 @@ impl WebViewBackend for CefBackend {
             "Binary size 220-300 MB (Faz 8.5 self-update required)",
             "Idle RAM +50-100 MB vs WebView2",
             "Disk cache +150 MB (%APPDATA%/Viscos/cef-cache)",
-            "Faz 1.6 PR-2 scope: subprocess routing + V8 bridge + crashpad out-of-scope (human release engineering)",
+            "Faz 1.6 PR-2 scope: V8 bridge + crashpad out-of-scope (human release engineering); subprocess routing implemented via `execute_process_if_subprocess`",
         ]
     }
 }
@@ -164,13 +232,6 @@ mod tests {
     fn cef_backend_name_is_stable() {
         let backend = CefBackend::new();
         assert_eq!(backend.name(), "CEF (cef-rs)");
-    }
-
-    #[test]
-    fn cef_subprocess_marker_is_false() {
-        // PR-2 scope: subprocess routing main.rs'de (out-of-scope).
-        // Marker `false` → main.rs'de `cef::execute_process` çağrısı yok.
-        assert!(!cef_subprocess_main_marker());
     }
 
     #[test]
@@ -224,12 +285,59 @@ mod tests {
     }
 
     #[test]
-    fn cef_known_issues_mentions_subprocess_out_of_scope() {
+    fn cef_known_issues_mentions_subprocess_implemented() {
+        // Subprocess routing artık implemented (PR ile `execute_process_if_subprocess`
+        // fonksiyonu feature-gated olarak eklenmiştir). known_issues listesi
+        // hâlâ subprocess kelimesini içermeli (insan review için context) ama
+        // "subprocess routing + V8 bridge + crashpad out-of-scope" string'i
+        // kalkmalı.
         let backend = CefBackend::new();
         let issues = backend.known_issues();
         assert!(
             issues.iter().any(|i| i.contains("subprocess")),
-            "subprocess routing out-of-scope marker mutlaka listelenmeli: {issues:?}"
+            "subprocess routing hâlâ known_issues'ta listelenmeli: {issues:?}"
         );
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.contains("subprocess routing + V8 bridge + crashpad out-of-scope")),
+            "subprocess routing artık implemented; eski 'subprocess routing + V8 bridge + crashpad out-of-scope' \
+             string'i kalkmalı: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn subprocess_detection_returns_none_for_main_process() {
+        // `cargo test` ana process olarak çalışır (CEF subprocess'i değil);
+        // `execute_process_if_subprocess` `None` dönmeli — yani ana process
+        // initialization'a devam eder.
+        //
+        // Feature ON iken gerçek `cef_rs::execute_process` çağrılır; CEF
+        // subprocess tespit etmediğinden `-1` döner → `None` propagate
+        // olur. Test build'i gerçek CEF runtime olmadan da feature ON
+        // olsa bu yol çalışmalıdır (default `MainArgs::default()` zero-init
+        // → "no recognized subprocess type" → -1).
+        let result = execute_process_if_subprocess();
+        assert!(
+            result.is_none(),
+            "ana process için execute_process_if_subprocess None dönmeli: got {result:?}"
+        );
+    }
+
+    #[test]
+    fn execute_process_if_subprocess_compiles_in_both_modes() {
+        // Compile-time güvence: fonksiyon her iki feature modunda da
+        // çağrılabilir olmalı (signature stable).
+        let _: Option<i32> = execute_process_if_subprocess();
+    }
+
+    #[test]
+    fn cef_subprocess_marker_is_false() {
+        // Marker sözleşmesi: `cef_subprocess_main_marker` hâlâ
+        // compile-time `false` döner. Gerçek routing
+        // `execute_process_if_subprocess()` üzerinden — bu marker
+        // yalnızca sözleşme dokümantasyonu (Faz 1.6 PR-2 öncesi
+        // sözleşme kontratı).
+        assert!(!cef_subprocess_main_marker());
     }
 }

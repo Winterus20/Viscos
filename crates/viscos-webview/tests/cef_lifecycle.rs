@@ -11,8 +11,11 @@
 //!   `%APPDATA%/Viscos/cef` yerine explicit path kullanır.
 //!
 //! - **`cef_subprocess_routing_marker`**: `cef_subprocess_main_marker()`
-//!   her zaman `false` (PR-2 out-of-scope). İnsan release engineering
-//!   `FOLLOW-UP-REAL-WORLD-WORK.md §B`'de.
+//!   her zaman `false` (geriye uyumluluk sözleşmesi). Gerçek subprocess
+//!   routing `execute_process_if_subprocess()` üzerinden feature-gated.
+//!
+//! - **`execute_process_if_subprocess_returns_none_in_test_process`**: Ana
+//!   process'te `execute_process` çağrısı `None` dönmeli (subprocess değiliz).
 //!
 //! - **`mock_cef_browser_handle` (feature `test-cef-mock`):** Sahte
 //!   `cef::Browser` handle ile smoke test. Feature CI smoke için
@@ -21,12 +24,14 @@
 //! ADR-0012 §4 + Faz 1.6 Dalga 1b plan dosyası.
 
 use viscos_webview::{
-    BackendKind, CefBackend, WebViewBackend, cef_subprocess_main_marker, resolve_backend,
+    BackendKind, CefBackend, WebViewBackend, cef_subprocess_main_marker,
+    execute_process_if_subprocess, resolve_backend,
 };
 
 #[test]
 fn cef_initialize_idempotent() {
-    // PR-2 scope: subprocess routing main.rs'de (out-of-scope).
+    // PR-2 scope: subprocess routing `execute_process_if_subprocess` üzerinden
+    // feature-gated. Marker `false` → sözleşme kontratı (geriye uyumluluk).
     // Bu test yalnızca sözleşmeyi doğrular; gerçek `cef::api_hash` +
     // `cef::initialize` çağrıları Faz 1.6 Dalga 1b sonrası (insan-only).
     assert!(
@@ -34,10 +39,9 @@ fn cef_initialize_idempotent() {
         "PR-2 scope: cef_subprocess_main_marker must be false (main.rs marker sözleşmesi)"
     );
 
-    // Marker doğru → `main.rs` `cef::execute_process` çağırmaz, dolayısıyla
-    // initialize yalnız 1 kez çağrılır (idempotent invariant).
-    // İnsan PR (`FOLLOW-UP-REAL-WORLD-WORK.md §B`) marker'ı true yapar ve
-    // subprocess dispatch'i main.rs'de gerçekler.
+    // Marker doğru → `main.rs` `execute_process_if_subprocess` çağırır;
+    // bu fonksiyon ana process'te `None` döner → initialize yalnız 1 kez
+    // çağrılır (idempotent invariant).
 }
 
 #[test]
@@ -74,10 +78,25 @@ fn cef_runtime_path_override() {
 
 #[test]
 fn cef_subprocess_routing_marker() {
-    // `cef_subprocess_main_marker` her zaman `false` (PR-2 out-of-scope).
-    // main.rs bu marker'ı `if cef_subprocess_main_marker() { ... }` ile
-    // okur; `false` ise `cef::execute_process` çağrısı atlanır.
+    // `cef_subprocess_main_marker` her zaman `false` (geriye uyumluluk).
+    // main.rs bu marker'ı doğrudan kullanmaz; gerçek routing
+    // `execute_process_if_subprocess()` üzerinden — feature-gated.
     assert!(!cef_subprocess_main_marker());
+}
+
+#[test]
+fn execute_process_if_subprocess_returns_none_in_test_process() {
+    // `cargo test` her zaman ana process'te çalışır. CEF subprocess
+    // tespit edilmediğinden `execute_process_if_subprocess` `None` dönmeli.
+    //
+    // Feature OFF iken stub: None.
+    // Feature ON iken `cef_rs::execute_process` default `MainArgs::default()`
+    // ile çağrılır; command-line `--type=` flag'i olmadığından
+    // subprocess tespit edilmez, `-1` döner, `None` propagate olur.
+    assert!(
+        execute_process_if_subprocess().is_none(),
+        "test process ana process olarak çalışmalı; subprocess dispatch None dönmeli"
+    );
 }
 
 #[cfg(feature = "test-cef-mock")]

@@ -1,6 +1,8 @@
 //! Viscos binary entry point (Faz 1.6 Dalga 1b/c — MVP-1B).
 //!
 //! Faz 1.6 akışı:
+//! 0. CEF subprocess dispatch (`execute_process_if_subprocess`) — exit
+//!    early if running as CEF subprocess (renderer/gpu/network/utility).
 //! 1. tracing init (stdout + default filter)
 //! 2. CLI parsing (`--backend=webview2|cef|auto`)
 //! 3. config load (`config/default.toml` → `config/local.toml` → env)
@@ -28,7 +30,7 @@ use viscos_core::VISCOS_VERSION;
 use viscos_ipc::DefaultIpcRouter;
 use viscos_shell::ShellBuilder;
 use viscos_watchdog::{StubAutosave, Watchdog, WatchdogConfig};
-use viscos_webview::{BackendKind, resolve_backend};
+use viscos_webview::{BackendKind, execute_process_if_subprocess, resolve_backend};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -66,6 +68,25 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<()> {
+    // 0. CEF subprocess dispatch — `cef::execute_process` **her** process'te
+    //    ana thread'de `cef::initialize`'dan **önce** çağrılmalıdır (CEF
+    //    protokolü, `_cef_main_args_t` standardı). CEF subprocess'leri
+    //    (renderer/gpu/network/utility) browser process tarafından
+    //    `--type=` command-line flag'i ile spawn edilir; bu fonksiyon
+    //    flag'i parse edip subprocess ise `Some(exit_code)` döner.
+    //    Browser process'te `None` döner → normal initialization'a devam.
+    //
+    //    Bu çağrı tracing init'ten **önce** yapılır: subprocess
+    //    terminate edilecekse logging overhead'i gereksiz.
+    //
+    //    Feature kapalıyken (`cef-backend` off) stub: `None` → atlanır.
+    if let Some(exit_code) = execute_process_if_subprocess() {
+        // CEF subprocess kendi yaşam döngüsünü tamamladı, exit code propagate.
+        // `std::process::exit` cleanup handler'larını atlar; CEF subprocess
+        // için kabul edilen pattern (C++ CefExecuteProcess örnekleriyle uyumlu).
+        std::process::exit(exit_code);
+    }
+
     // 1. Logging — önce init et ki aşağıdaki log'lar yakalansın.
     viscos_log::init();
 
@@ -208,5 +229,19 @@ mod tests {
         assert_eq!(kind, BackendKind::Cef);
         let kind = viscos_webview::resolve_backend(Some("webview2"), Some("cef"), None).unwrap();
         assert_eq!(kind, BackendKind::WebView2);
+    }
+
+    #[test]
+    fn execute_process_if_subprocess_in_main_returns_none() {
+        // `cargo test -p viscos` ana process olarak çalışır; CEF
+        // subprocess dispatch `None` dönmeli. Bu test, `main.rs`'in
+        // `execute_process_if_subprocess` import ettiğini ve
+        // fonksiyonun test process'te subprocess olarak davranmadığını
+        // doğrular.
+        let result = viscos_webview::execute_process_if_subprocess();
+        assert!(
+            result.is_none(),
+            "test process'te CEF subprocess dispatch None dönmeli (ana process): got {result:?}"
+        );
     }
 }
