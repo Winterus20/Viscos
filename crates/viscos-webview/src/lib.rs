@@ -9,6 +9,8 @@
 //! - **`WebView2Backend`:** gerçek `wry` runtime (Windows-only, MVP-1B).
 //! - **`CefBackend`:** feature-gated stub (default) + DLL check (feature ON).
 //!   B1 kararı: default build CEF kullanmaz; feature açıkça enable edilmeli.
+//! - **`execute_process_if_subprocess`:** CEF subprocess dispatch entry point
+//!   (Faz 1.6 Dalga 1b); `main.rs` bu fonksiyonu `cef::initialize`'dan önce çağırır.
 //! - **RDP detection:** `GetSystemMetrics(SM_REMOTESESSION)` (ADR-0012 §6).
 //! - **Win11 detection:** `windows_version::OsVersion::current().build >= 22000`
 //!   (compile-time `cfg!` yerine runtime, ADR-0012 §4).
@@ -25,7 +27,7 @@ pub mod backend;
 pub mod cef;
 pub mod webview2;
 
-pub use crate::cef::{CefBackend, cef_subprocess_main_marker};
+pub use crate::cef::{CefBackend, cef_subprocess_main_marker, execute_process_if_subprocess};
 pub use backend::{
     BackendKind, SharedBackend, WebViewBackend, WebViewWindow, WindowConfig, is_rdp_session,
     is_windows_11, resolve_backend, select_default_backend,
@@ -74,5 +76,12 @@ mod tests {
     #[test]
     fn cef_subprocess_marker_is_exposed() {
         let _: bool = cef_subprocess_main_marker();
+    }
+
+    #[test]
+    fn execute_process_if_subprocess_is_exposed() {
+        // Subprocess routing function exposed — signature stable
+        // her iki feature modunda.
+        let _: Option<i32> = execute_process_if_subprocess();
     }
 }
