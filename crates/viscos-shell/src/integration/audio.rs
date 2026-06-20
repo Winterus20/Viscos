@@ -360,6 +360,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    #[allow(clippy::collapsible_if)] // sequential checks: audio present → skip vs panic
     fn toggle_mute_windows_inverts_cached_state() {
         let ctrl = AudioController::new().expect("construct");
         // First toggle: WASAPI round-trip — if a Windows audio endpoint is
