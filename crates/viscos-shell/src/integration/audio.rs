@@ -365,7 +365,19 @@ mod tests {
         // First toggle: WASAPI round-trip — if a Windows audio endpoint is
         // present the call will mutate real audio. We tolerate either outcome
         // but the cached state must be consistent with the returned bool.
-        let new_state = ctrl.toggle_mute().expect("toggle");
+        //
+        // CI runners (Windows Server, no audio service) frequently lack a
+        // default audio endpoint. `GetDefaultAudioEndpoint` returns
+        // `Element not found (0x80070490)` in that case — skip the test
+        // instead of panicking so CI stays green for non-audio changes.
+        let first = ctrl.toggle_mute();
+        if let Err(e) = &first {
+            if e.to_string().contains("GetDefaultAudioEndpoint failed") {
+                eprintln!("skipping: no audio endpoint in this environment ({e})");
+                return;
+            }
+        }
+        let new_state = first.expect("toggle");
         assert_eq!(ctrl.mic_muted(), new_state);
         // Toggle back.
         let new_state2 = ctrl.toggle_mute().expect("toggle back");
