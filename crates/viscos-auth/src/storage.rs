@@ -27,6 +27,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::SERVICE_NAME;
 
 /// Auth katmanı hata modeli — `viscos_error::ViscosError::Auth`'a propagate eder.
+///
+/// `#[non_exhaustive]` — yeni varyant eklemek non-breaking. Tüketici `_ =>` kolu
+/// bulundurmalı.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AuthError {
@@ -44,6 +47,20 @@ pub enum AuthError {
     UnsupportedPlatform(String),
     #[error("keyring store not initialized (call AuthStorage::install() at startup)")]
     StoreNotInitialized,
+    /// Token format sanity check başarısız (format, geçerlilik değil).
+    ///
+    /// Gerçek geçerlilik `GET /users/@me` ile doğrulanır (ADR-0011 §2).
+    #[error("invalid Discord token format: expected <base64>.<timestamp>.<hmac>")]
+    InvalidTokenFormat,
+    /// Ağ çağrısı başarısız (Discord REST veya MFA endpoint).
+    #[error("network error: {0}")]
+    NetworkError(String),
+    /// Depolama operasyonu başarısız (keyring dışı storage katmanı için).
+    #[error("store failed: {0}")]
+    StoreFailed(String),
+    /// MFA akışı başarısız (TOTP üretim veya doğrulama hatası).
+    #[error("MFA failed: {0}")]
+    MfaFailed(String),
 }
 
 /// Bellek-dwell hesap state'i. `ZeroizeOnDrop` ile drop anında zeroize.
