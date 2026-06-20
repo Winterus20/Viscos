@@ -9,6 +9,7 @@
 //! - [`phase-1.5-telemetry-and-restart-optimization.md`] (tray badge)
 
 mod config;
+mod event_loop;
 mod shell;
 mod tray;
 
@@ -67,6 +68,22 @@ mod tests {
             .build();
         assert!(!shell.config().tray_enabled);
         assert!(shell.config().devtools_enabled);
+        // Faz 1.6 Dalga 1b: no backend attached → stub mode.
+        assert!(!shell.has_backend());
+    }
+
+    /// Faz 1.6 Dalga 1b: `ShellBuilder::backend(...)` attaches a backend
+    /// and flips `Shell::has_backend()` to true. The event loop itself
+    /// is not exercised here (requires a display).
+    #[test]
+    fn shell_builder_backend_attaches_real_runtime() {
+        let backend: viscos_webview::SharedBackend =
+            std::sync::Arc::new(viscos_webview::WebView2Backend::new());
+        let shell = ShellBuilder::new().backend(backend).build();
+        assert!(
+            shell.has_backend(),
+            "Shell with backend must report has_backend() == true"
+        );
     }
 
     #[test]
