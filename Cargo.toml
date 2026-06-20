@@ -98,6 +98,18 @@ windows = { version = "0.58", default-features = false, features = [
 # Test helpers (Faz 2.0 REST integration test'leri)
 mockito = "1.5"
 
+# Faz 1.6 — CLI parsing (viscos binary --backend=... flag).
+clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
+
+# Faz 1.6 — Runtime Windows 11 build detection (replaces compile-time cfg!).
+windows-version = "0.1"
+
+# Faz 1.6 — CEF (Chromium Embedded Framework) backend. Feature-gated;
+# default build (CI cross-platform) uses the stub. Win11 production builds
+# enable `viscos-webview/cef-backend` for the real runtime. Requires CMake 3.21+
+# and Ninja at build time. See crates/viscos-webview/README.md for prerequisites.
+cef_rs = { git = "https://github.com/tauri-apps/cef-rs", tag = "cef-v148.3.0+148.0.9", default-features = false, package = "cef" }
+
 # Faz 8.0 — Distribution (auto-updater, crash, profiling, code signing)
 self_update = { version = "0.42", default-features = false, features = [
     "rustls",

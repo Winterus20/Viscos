@@ -8,12 +8,42 @@ authors.workspace = true
 repository.workspace = true
 description = "WebView backend abstraction layer (WebView2 + CEF) — pluggable backend seçimi, Faz 1.6+."
 
+[features]
+# Default features kept OFF so cross-platform CI never pulls CEF build deps.
+# Win11 production builds opt in explicitly:
+#   cargo build --release --features viscos-webview/cef-backend
+cef-backend = ["dep:cef_rs"]
+# CI smoke test (mock CefBrowser handle, no real DLL required).
+test-cef-mock = ["cef-backend"]
+# Optional: real `tao::EventLoop` driven tests (skipped on headless CI).
+tao-runtime-tests = []
+
 [dependencies]
 viscos-error = { path = "../viscos-error" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
+# `tao` is declared unconditionally (target-independent) so that
+# `EventLoopWindowTarget<()>` and other types compile in non-Windows builds.
 tao = { workspace = true }
+
+# Runtime Windows 11 build detection (ADR-0012 §4, Faz 1.6).
+windows-version = { workspace = true }
+
+# CEF feature-gated runtime (Chromium 148.x). External `cef` crate ile aynı
+# isim çakışmasını önlemek için `package` rename ile `cef_rs` extern crate adı kullanılır.
+cef_rs = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# Windows-specific tao runtime (rwh_06 → windows-rs handle conversion).
+tao = { workspace = true, features = ["rwh_06"] }
 wry = { workspace = true }
+# RDP session detection (`GetSystemMetrics(SM_REMOTESESSION)`).
+# Crate-level feature union is sufficient — no per-feature dep required
+# because the webview RDP detection only needs Win32_UI_WindowsAndMessaging.
+windows = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+mockito = { workspace = true }

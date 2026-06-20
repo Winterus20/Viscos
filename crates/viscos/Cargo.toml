@@ -26,3 +26,5 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["signal", "rt", "macros"] }
 anyhow = { workspace = true }
 serde = { workspace = true }
+# Faz 1.6 Dalga 1c — `--backend=webview2|cef|auto` CLI flag (ADR-0012 §4).
+clap = { workspace = true }
