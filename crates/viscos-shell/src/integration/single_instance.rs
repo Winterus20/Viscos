@@ -79,12 +79,40 @@ impl SingleInstance {
 
 #[cfg(test)]
 mod tests {
+    //! Tests share a global static `HELD` mutex via the production API.
+    //!
+    //! The production stub uses `parking_lot::Mutex::try_lock`, which is
+    //! non-blocking. When `cargo test` runs unit tests in parallel
+    //! (default `--test-threads`), two tests calling `SingleInstance::acquire()`
+    //! simultaneously will race — one wins, the other returns
+    //! `ViscosError::Media("instance already running")` and the test panics
+    //! on `assert!(instance.is_ok())`.
+    //!
+    //! This is a documented stub limitation (`single_instance.rs:19-21`):
+    //! "test'ler sıralı çalışır (cargo test thread sayısı 1 default) veya
+    //! `try_lock` race'ini kabul eder." Faz 1.6'da `single-instance 0.3`
+    //! crate'i ile cross-process OS lock olacak; bu race production
+    //! davranışını etkilemeyecek.
+    //!
+    //! Fix: a test-only `Mutex` (`TEST_LOCK`) wraps the body of each test
+    //! that calls `SingleInstance::acquire()`. This serializes the racing
+    //! tests at the *test harness* level without changing production
+    //! behavior — `SingleInstance::acquire()` still uses the production
+    //! `try_lock` path unchanged.
+
     use super::*;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Test-only lock that serializes access to the production `HELD` mutex.
+    /// `parking_lot::Mutex` is `!Send` across `.lock()` on contention failure,
+    /// so we use `std::sync::Mutex` which returns `Result` and is poison-safe.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn first_acquire_succeeds() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         let instance = SingleInstance::acquire();
         assert!(instance.is_ok());
         assert!(instance.unwrap().is_held());
@@ -93,6 +121,7 @@ mod tests {
 
     #[test]
     fn drop_releases_lock_for_next_test() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         // Her test isolation için explicit scope.
         {
             let _first = SingleInstance::acquire().expect("first acquire");
@@ -104,6 +133,7 @@ mod tests {
 
     #[test]
     fn on_secondary_launch_accepts_closure() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         let instance = SingleInstance::acquire().unwrap();
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
