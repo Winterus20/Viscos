@@ -7,6 +7,10 @@
 //! native window + WebView, and runs the event loop until the window
 //! is closed or Ctrl-C is signalled.
 //!
+//! The blocking `event_loop.run(...)` call + Ctrl-C listener thread
+//! live in the sibling [`super::event_loop`] module (extracted to keep
+//! this file under the `.cursorrules` Bölüm 2 400-line soft limit).
+//!
 //! When constructed without a backend (legacy / test path), [`Shell::run`]
 //! preserves the Faz 1.0 stub behaviour — it logs the configuration and
 //! returns `Ok(())` immediately. This keeps the existing CI unit tests
@@ -16,15 +20,12 @@
 //! `ResizeObserver` is a placeholder frame-timing probe (Faz 1.5 will add real metrics).
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use tao::dpi::LogicalSize;
-use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
-use tao::window::WindowBuilder;
-use viscos_webview::{SharedBackend, WebViewBackend, WebViewWindow, WindowConfig};
+use tao::event_loop::EventLoop;
+use viscos_webview::{SharedBackend, WebViewBackend, WindowConfig};
 
 use super::config::{ShellConfig, TrayMenu};
+use super::event_loop::{run_loop, spawn_ctrl_c_listener};
 use super::tray::default_tray_menu;
 
 /// Resize davranışı gözlemcisi (placeholder).
@@ -54,18 +55,10 @@ impl ResizeObserver {
     }
 }
 
-/// Process-global Ctrl-C flag.
+/// Process-global Ctrl-C flag lives in [`super::event_loop`] (extracted
+/// to keep this file lean). See that module's docs for the rationale
+/// (tao's `'static` closure requirement + Windows main-thread affinity).
 ///
-/// Set by an OS thread spawned in [`Shell::run`] that owns its own
-/// tokio runtime + listens on `tokio::signal::ctrl_c`. The tao
-/// event-loop callback polls this flag each iteration and exits
-/// gracefully when the user presses Ctrl-C.
-///
-/// We use a process-global rather than `Arc<AtomicBool>` on `Shell`
-/// because tao's event-loop callback must be `'static` — we cannot
-/// borrow from `&self` inside the closure.
-static CTRL_C_RECEIVED: AtomicBool = AtomicBool::new(false);
-
 /// `Shell` handle.
 ///
 /// Faz 1.6 Dalga 1b: real `tao::EventLoop` + backend-attached `WebViewWindow`.
@@ -254,103 +247,6 @@ impl Shell {
     }
 }
 
-/// Ctrl-C listener thread'i spawn et (process-global flag ile haberleşir).
-///
-/// `tao::EventLoop::run()` main thread'i blokladığı için async
-/// `tokio::signal::ctrl_c().await`'ı ayrı bir OS thread'inde çalıştırıyoruz.
-/// Sinyal geldiğinde `CTRL_C_RECEIVED` flag'ini set eder; ana thread'in
-/// event loop callback'i bu flag'i kontrol eder ve `ControlFlow::Exit`
-/// ile loop'u sonlandırır.
-///
-/// Thread leak: bu thread uygulama ömrü boyunca yaşar (Ctrl-C'yi süresiz
-/// dinler). Process exit'te OS tarafından reclaim edilir — sorun değil.
-fn spawn_ctrl_c_listener() {
-    use std::thread;
-
-    thread::Builder::new()
-        .name("viscos-ctrlc".into())
-        .spawn(|| {
-            // Her ne kadar main thread'de `tokio::runtime::Runtime` kurulu
-            // olmasa da (sync main), bu thread kendi runtime'ını kurup
-            // async signal'i bekleyebilir. `current_thread` flavor yeterli
-            // çünkü yalnızca tek bir future (ctrl_c) poll ediyoruz.
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt,
-                Err(err) => {
-                    tracing::error!(?err, "ctrl-c tokio runtime kurulamadı");
-                    return;
-                }
-            };
-
-            runtime.block_on(async {
-                if let Err(err) = tokio::signal::ctrl_c().await {
-                    tracing::error!(?err, "ctrl-c handler başarısız");
-                    return;
-                }
-                tracing::warn!("Ctrl-C received (Faz 1.6 event loop path)");
-                CTRL_C_RECEIVED.store(true, Ordering::SeqCst);
-            });
-        })
-        .expect("viscos-ctrlc thread spawn başarısız");
-}
-
-/// `tao::EventLoop::run` blocking call'unu çalıştır.
-///
-/// Ayrı fonksiyon olarak tutmamızın sebebi: closure içinde `Box<dyn WebViewWindow>`
-/// ve diğer non-`'static` referansları değil, sadece `'static` uyumlu
-/// handle'ları kullanabiliyoruz. Fonksiyon argümanları `move` ile
-/// transfer edildiğinden borrow checker sorunu yok.
-fn run_loop(event_loop: EventLoop<()>, window: Box<dyn WebViewWindow>) {
-    let webview_id = window.id();
-    event_loop.run(
-        move |event, _target: &EventLoopWindowTarget<()>, control: &mut ControlFlow| {
-            // Ctrl-C polling — her event'te kontrol et. `Ordering::Relaxed`
-            // yeterli: write bir kere yapılıyor ve yalnızca exit tetiklemek
-            // için okunuyor (memory order gerektirmeyen bir boolean flag).
-            if CTRL_C_RECEIVED.load(Ordering::Relaxed) {
-                tracing::info!(window_id = webview_id, "Ctrl-C: event loop exit");
-                *control = ControlFlow::Exit;
-                return;
-            }
-
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    tracing::info!(window_id = webview_id, "window close requested");
-                    // `Box<dyn WebViewWindow>`'un `close()` methodu WebView
-                    // dispose eder + tao::Window'u yok eder; gerçek kapatma
-                    // `Drop` ile olur. Burada sadece event loop'a exit sinyali
-                    // veriyoruz.
-                    if let Err(err) = window.close() {
-                        tracing::warn!(?err, "WebViewWindow::close hata (devam ediliyor)");
-                    }
-                    *control = ControlFlow::Exit;
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::Destroyed,
-                    ..
-                } => {
-                    tracing::debug!(window_id = webview_id, "window destroyed");
-                    // Pencere destroy edildi → loop'tan çık. (Normal close
-                    // path'te CloseRequested önce gelir; bu sadece OOM/crash
-                    // gibi beklenmedik durumlar için.)
-                    *control = ControlFlow::Exit;
-                }
-                _ => {
-                    // Diğer event'ler (mouse, keyboard, resize, scale_factor
-                    // changed, vb.) Faz 5.0 native UI ve Faz 6.0 hotkey'lerde
-                    // handle edilecek. Şimdilik consume edip ignore.
-                }
-            }
-        },
-    );
-}
-
 /// `Shell` builder (fluent API).
 #[derive(Default)]
 pub struct ShellBuilder {
@@ -415,8 +311,3 @@ impl ShellBuilder {
         }
     }
 }
-
-// (WindowBuilder / Window / WindowEvent / Event / EventLoop types re-exported
-// via `tao` at the crate root — direct module paths used above for clarity.)
-#[allow(dead_code)]
-fn _assert_windowbuilder_in_scope(_: WindowBuilder, _: LogicalSize<u32>) {}

@@ -9,6 +9,7 @@
 //! - [`phase-1.5-telemetry-and-restart-optimization.md`] (tray badge)
 
 mod config;
+mod event_loop;
 mod shell;
 mod tray;
 
