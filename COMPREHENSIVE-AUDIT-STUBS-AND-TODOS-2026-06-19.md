@@ -1,6 +1,7 @@
 # Viscos MVP v0.1.0 — Comprehensive Audit: Stubs, TODOs, Unfinished Work
-**Updated:** 2026-06-19  
-**Scope:** Consolidation of AUDIT-STUBS-2026-06-18.md + FOLLOW-UP-REAL-WORLD-WORK.md + MVP-GAP-ANALYSIS-2026-06-18.md + fresh code scan.  
+**Updated:** 2026-06-20 (post-PR-13, PR-14, PR-15, PR-16, PR-17)  
+**Previous revision:** 2026-06-19  
+**Scope:** Consolidation of AUDIT-STUBS-2026-06-18.md + FOLLOW-UP-REAL-WORLD-WORK.md + MVP-GAP-ANALYSIS-2026-06-18.md + fresh code scan.
 **Build status:** `cargo check` clean, 405+ tests pass, release binary ~1.56 MB (WebView2 backend).
 
 ---
@@ -13,29 +14,31 @@
 **Human-only (release engineering / soak / account testing):** ~15
 
 **Three categories:**
-- **IMPLEMENTED:** Telemetry store (MVP-3), WebView2 runtime (MVP-1), hotkeys scaffold (MVP-3), WebGL fingerprint, cache facade, gateway bridge.
-- **STUBBED (intentional):** Auth `/auth/login` endpoint (Faz 2.1), distribution (signtool/updater/CEF self-update), native UI panels, auto-launch, single-instance.
-- **UNFINISHED:** Real CEF subprocess routing (Faz 1.6+), plugin loader (Faz 5+), voice/video (Faz 7+), release engineering (Faz 8.0+).
+- **IMPLEMENTED (real runtime):** WebView2 backend runtime (Windows, MVP-1B), telemetry store (SQLite, MVP-3), backend selection logic (MVP-1A), WebGL fingerprint, cache facade, gateway bridge trait + event conversion.
+- **SCAFFOLDED (data types + manager + parsing, but no real run-loop / event-loop / main-thread glue):** Shell struct + `ShellBuilder` + `ResizeObserver` (no real `tao::EventLoop` yet), hotkey manager + `parse_combo` (Windows `global-hotkey` wired but no event dispatch into main loop), `ViscosGateway::connect` (real twilight Shard but lazy-connect, not yet wired in `main.rs`), `ViscosHttp` REST client (real twilight-http wrapper; reactions stub).
+- **STUB (default behavior, no real impl):** `Shell::run()` (logs "Shell ready", no event loop), `StubAutosave` watchdog draft save, `StubHandler` IPC (default returns `Unimplemented` for every command), `execute_process_if_subprocess` CEF subprocess (no real CEF binary integration yet).
+- **UNFINISHED:** Real CEF subprocess routing (Faz 1.6+, scaffolding landed in PR-15), gateway spawn in `main.rs` (Faz 3.0), plugin loader (Faz 5+), voice/video (Faz 7+), release engineering (Faz 8.0+), 24h soak test (insan only).
 
 ---
 
 ## 2. Implemented & MVP-Ready
 
 ### 2.1 Shell + Event Loop (MVP-1A, Faz 1.6 Dalga 1b)
-- ✅ `viscos-shell::Shell::run()` — real `tao::EventLoop` ownership
-- ✅ `tao::Window` + `WindowBuilder::build(target)` integration
-- ✅ Event loop callback dispatch (keyboard, mouse, resize, close)
-- ✅ Tray menu scaffold (state management; render Faz 5)
-- ✅ Config loading (`config/default.toml` → TOML merge → env override)
-- ✅ CLI parsing (`--backend=webview2|cef|auto`) Faz 1.6 Dalga 1c
+- 🟡 **Stub — partial:** `viscos-shell::Shell` struct + `ShellBuilder` + `ResizeObserver` (fluent API) + `ShellConfig` (window + tray)
+- 🟡 **Stub:** `Shell::run()` currently logs `"Shell ready (Faz 1.0 stub — event loop will start in Faz 1.6)"` and returns `Ok(())` — **no real `tao::EventLoop` ownership or `EventLoop::run()` call**. Real event loop + window + WebView attach landed in `main.rs` workflow (PR-15 / `feat/shell-event-loop-real-runtime` follow-up)
+- ✅ `tao::Window` + `WindowBuilder::build(target)` integration (in `webview2.rs::create_window` — Windows-only)
+- 🟡 **Scaffold:** Tray menu data structure (`TrayMenu`, `TrayState`, `default_tray_menu()`); real OS tray icon + click handling pending Faz 5
+- ✅ Config loading (`config/default.toml` → TOML merge → env override) in `viscos-config::Config::load()`
+- ✅ CLI parsing (`--backend=webview2|cef|auto`) Faz 1.6 Dalga 1c (`clap` derive in `main.rs`)
+- ⚠️ **Caveat:** Until `Shell::run()` runs the real event loop, the binary prints "Viscos ready" and waits for Ctrl-C without an actual window — `feat/shell-event-loop-real-runtime` branch is the follow-up that wires `Shell::run()` to `tao::event_loop::EventLoop::new().run(...)` and dispatches events to the WebView backend.
 
 ### 2.2 WebView2 Runtime (MVP-1B, Faz 1.6 Dalga 1a/1b)
-- ✅ `WebView2Backend::create_window()` — real `wry::WebView` handle
-- ✅ `wry::WebViewBuilder::with_url("https://discord.com/app")`
-- ✅ DevTools enabled in debug builds
-- ✅ IPC handler scaffold (`with_ipc_handler` no-op → real routing Faz 1.6 1b+)
-- ✅ `unsafe impl Send + Sync` for `WebView2Window` (main-thread affinity contract)
-- ✅ Parent directory auto-creation for SQLite (SQLITE_CANTOPEN errno 14 fix)
+- ✅ `WebView2Backend::create_window()` — real `wry::WebView` handle (Windows-only via `#[cfg(target_os = "windows")]`; non-Windows returns `Unimplemented`)
+- ✅ `wry::WebViewBuilder::with_url(...)` for `https://discord.com/app` (`DISCORD_APP_URL`)
+- ✅ DevTools enabled in debug builds (`cfg!(debug_assertions)`)
+- 🟡 **Scaffold — not wired:** IPC handler wiring (`with_ipc_handler` / `on_ipc_message`) is **not yet called** in `create_window()`; `wry`'s IPC channel between the WebView and Rust is **not active**. `DefaultIpcRouter` is built in `main.rs` (`let _router = DefaultIpcRouter::new();`) but `_router` is dropped on the next line — there is no bridge yet between the router and the WebView. Real wiring lands in the `feat/shell-event-loop-real-runtime` follow-up (PR-18 scope)
+- ✅ `unsafe impl Send + Sync` for `WebView2Window` (main-thread affinity contract, with SAFETY justification)
+- ✅ Parent directory auto-creation for SQLite + WebView2 user-data dir (SQLITE_CANTOPEN errno 14 fix)
 
 ### 2.3 WebGL Fingerprint (MVP-1B, Faz 1.6)
 - ✅ `viscos-auth::super_properties::webgl_fingerprint` module
@@ -66,12 +69,13 @@
 - ✅ In-memory store for tests
 
 ### 2.6 Watchdog + GDI Sampling (MVP-1+3, Faz 1.0+1.5)
-- ✅ `viscos-watchdog::Watchdog` — background task (30s sample interval)
+- ✅ `viscos-watchdog::Watchdog` — background task (30s sample interval; spawned in `main.rs:139`)
 - ✅ `gdi_samples::count_gdi_handles()` (Windows) / stub (non-Windows)
 - ✅ `RestartSignal` — signal emission on GDI leak critical
 - ✅ `StubAutosave` — in-memory draft save placeholder (Faz 1.5 real impl)
-- ✅ Telemetry callback (`on_sample`, `on_restart`)
+- ✅ Telemetry callback (`on_sample`, `on_restart`) — `TelemetrySink` trait is implemented
 - ✅ test: spawn + sample + validate logging
+- 🟡 **Not wired in `main.rs`:** `TelemetryStore` is **not constructed or opened in `main.rs`**. The `Watchdog` is created with `StubAutosave` and a `RestartSignal`; no `TelemetrySink`/`TelemetryStoreSink` is passed in. Wiring `Watchdog::new(..., TelemetryStoreSink)` is deferred to a follow-up PR (Faz 1.5 Polish scope) — until then, telemetry DB stays empty at runtime even though the `TelemetryStore` API itself is real and tested.
 
 ### 2.7 Hotkeys Scaffold (MVP-3, Faz 6.0)
 - ✅ `HotkeyAction` enum: ToggleMute, ToggleDeafen, QuickSwitcher, OpenSettings, ToggleDevtools
@@ -98,12 +102,13 @@
 - ✅ Tests: CLI wins, config fallback, auto resolution
 
 ### 2.10 Gateway + API (MVP-2, Faz 3.0)
-- ✅ `viscos-api::ViscosGateway` — twilight-gateway integration
-- ✅ `connect(token, intents)` → real websocket
-- ✅ `run_until_disconnect(|event| async { ... })`
-- ✅ Intent filtering: READY, GUILD_CREATE, MESSAGE_CREATE, MESSAGE_UPDATE
-- ✅ `GatewayCacheBridge` — event routing to cache + IPC push
-- ✅ Gateway spawned in main.rs (keyring token available)
+- ✅ `viscos-api::ViscosGateway` — twilight-gateway integration (real `twilight_gateway::Shard` wrapper, Config + ShardId::ONE)
+- 🟡 **Scaffold — lazy-connect only:** `connect(token, intents)` constructs a `Shard` via `Config::new(...)` + `Shard::with_config(...)`; the actual WebSocket only opens on the first `next_event().await` call (twilight lazy-connect model). No `next_event` consumer is wired anywhere in `main.rs`
+- 🟡 **Scaffold — `run_until_disconnect` is a library helper:** not yet driven from `main.rs`; there is no gateway task spawned at all
+- 🟡 **Scaffold — intent filtering:** `EventTypeFlags::all()` is passed to `next_event`; the doc-claim of "READY, GUILD_CREATE, MESSAGE_CREATE, MESSAGE_UPDATE" filtering is not enforced — any event the shard emits reaches `GatewayCacheBridge::handle_event`
+- ✅ `GatewayCacheBridge` — `handle_event` method + non-mvp2 events are no-ops; the type exists and is unit-tested
+- ❌ **Not in `main.rs`:** The gateway is **NOT spawned in `main.rs`**. `crates/viscos/src/main.rs` constructs: CEF subprocess dispatch, logging, CLI, config, backend resolution, `DefaultIpcRouter::new()` (and drops it), `Watchdog` (spawned), `ShellBuilder` → `shell.run()` (stub). There is no `ViscosGateway::connect(...)` + `tokio::spawn(...)` call. The gateway sits behind a feature gate or Faz 3.0 follow-up; this audit item is therefore not exercised at runtime
+- ⚠️ **Caveat:** Real gateway connect requires a valid Discord user token from `viscos-auth` keyring (ADR-0011); both `login_email()` / `login_qr()` are still stubs (see §3.2). Until a real auth path produces a token, `ViscosGateway::connect` cannot be tested end-to-end.
 
 ### 2.11 REST API (MVP-2, Faz 2.0+)
 - ✅ `viscos-api::ViscosClient` — twilight-http wrapper
@@ -113,11 +118,11 @@
 - ⚠️ **Caveat:** `create_reaction()` stub (twilight 0.17 API drift, Faz 2.0 follow-up)
 
 ### 2.12 IPC Router (MVP-1, Faz 1.0+)
-- ✅ `DefaultIpcRouter` — command dispatch + event push
-- ✅ `IpcCommand` enum: 30+ command types (LoginRequest, GetGuildList, SendMessage, etc.)
-- ✅ `IpcEvent` enum: 20+ event types (LoginSuccess, UnreadCountChanged, ThemeChanged, etc.)
-- ✅ `StubHandler` — default Unimplemented for unknown commands (design contract, test-verified)
-- ✅ Test: each command mapped, unregistered → Unimplemented
+- ✅ `DefaultIpcRouter` — command dispatch + event push struct
+- ✅ `IpcCommand` enum: 30+ command types (`LoginRequest`, `GetGuildList`, `GetChannelList`, `GetMessages`, `SendMessage`, `TriggerTyping`, `MarkChannelRead`, `Navigate`, `SetTheme`, `GetUnreadCount`, `SaveMessageDraft`, `CancelMessageDraft`, `Logout`, etc.)
+- ✅ `IpcEvent` enum: 20+ event types (`LoginSuccess`, `UnreadCountChanged`, `ThemeChanged`, etc.)
+- 🟡 **Default handler is `StubHandler`:** Every dispatched `IpcCommand` returns `Err(IpcCommandError::Unimplemented("<phase-X.Y> ..."))` unless a custom `Arc<dyn IpcHandler>` is injected via `DefaultIpcRouter::with_handler(...)`. `main.rs` uses `DefaultIpcRouter::new()` (default handler = `StubHandler`) and **immediately drops the router** (`let _router = DefaultIpcRouter::new();`). No real handler exists for any `IpcCommand` variant yet — this is a design contract (test-verified) and not a real router. Real handler injection lands in Faz 2.0+ per-variant.
+- ✅ Test: `StubHandler` returns `Unimplemented` for every known command, custom handler wiring (CountingHandler / FailingHandler) tested, `BadPayload` propagation tested.
 
 ---
 
@@ -245,22 +250,30 @@
 
 ## 7. Phase 1.6 Dalga 1b Status (CEF Default Rollout)
 
-### 7.1 Completed (Dalga 1a/1b)
-- ✅ WebView2Backend real runtime (MVP-1B)
+### 7.1 Completed (Dalga 1a/1b/1c — post-PR-1..PR-15)
+- ✅ WebView2Backend real runtime (Windows-only, MVP-1B)
 - ✅ WebGL fingerprint synthetic hash (real backend pending Faz 1.6 1b+)
-- ✅ Backend selection logic (`select_default_backend()`)
-- ✅ CLI `--backend=` override
+- ✅ Backend selection logic (`select_default_backend()` + `resolve_backend()`)
+- ✅ CLI `--backend=` override (`clap` derive in `main.rs`)
 - ✅ RDP detection (`GetSystemMetrics(SM_REMOTESESSION)`)
 - ✅ Win11 detection (`GetVersionExW`)
 - ✅ CEF feature-gated build (`cef-backend` Cargo feature)
-- ✅ CEF DLL check + browser creation (real CEF binary check)
+- ✅ CEF DLL check + browser creation (real CEF binary check, when feature is on)
+- ✅ CEF subprocess routing entry point (`execute_process_if_subprocess`, PR-15) — called from `main.rs:83` before tracing init
+- ✅ `CacheTiers::auto_tune` from hit ratio thresholds (PR-14)
+- ✅ `MediaCache` batch URL metadata refresh (PR-16)
+- ✅ `single_instance` CI-stable test wrapper (PR-17)
 
-### 7.2 Remaining (Dalga 1b/1c)
-- ⚠️ **CEF subprocess routing** — `cef::execute_process` in main.rs (TODO marker in cef.rs:77)
+### 7.2 Remaining (Dalga 1b/1c — open follow-ups)
+- ⚠️ **Real `Shell::run()` event loop** — `Shell::run()` is currently a log-and-return stub; needs `tao::event_loop::EventLoop::new().run(...)` + window attach + event dispatch (PR-18 / `feat/shell-event-loop-real-runtime` branch)
+- ⚠️ **WebView2 ↔ IPC bridge wiring** — `wry::WebViewBuilder::with_ipc_handler` is not yet called in `webview2.rs::create_window`; `DefaultIpcRouter` is constructed in `main.rs` but dropped immediately. Needs `ViscosIpcHandler` adapter + IPC payload deserialization in PR-18 follow-up
+- ⚠️ **Gateway spawn in `main.rs`** — `ViscosGateway::connect(...)` + `tokio::spawn` not present; gated by Faz 3.0 auth real impl (depends on `login_email` / `login_qr` Faz 2.0 1b)
+- ⚠️ **TelemetryStore wiring in `main.rs`** — `TelemetryStore::open(...)` + `TelemetryStoreSink` injection into `Watchdog::new(...)` is not present; Faz 1.5 Polish scope
 - ⚠️ **V8 context bridge** — `ViscosNative` inject to window object (Faz 4 scope with SharedBuffer)
 - ⚠️ **Crashpad integration** — CEF subprocess crash → minidump forward
-- ⚠️ **24h soak test** — manual Win11+CEF validation (no GDI leak)
+- ⚠️ **24h soak test** — manual Win11+CEF validation (no GDI leak; insan-only)
 - ⚠️ **CI matrix** — `.github/workflows/cef-backend.yml` runs feature matrix
+- ⚠️ **Signed CEF binary distribution** — 220-300 MB CEF binary needs Authenticode signing (cert purchase + signtool); PR-15 enabled subprocess routing but the CEF runtime itself is not yet bundled/signed (Faz 8.0+ release engineering)
 - ⚠️ **README** — build prerequisites (Ninja/CMake detection), manual test checklist
 
 ### 7.3 Known Risks
@@ -273,23 +286,23 @@
 ## 8. MVP v0.1.0 Definition of Done
 
 ### 8.1 Time-to-Login (Minimum)
-- [x] `cargo run` → pencere açılır
-- [x] WebView2 Discord.com/app yükler
-- [x] Login form görünür (email/password)
-- [x] MFA TOTP kodu girilebilir
-- [x] Token keyring'e yazılır (DPAPI)
-- [x] Token ile `/users/@me` 200 döner
-- [x] `cargo test --workspace` 405+ pass
-- [ ] Gerçek hesap test (insan test gerekli)
+- 🟡 `cargo run` → event loop **not yet** started (see §2.1 — `Shell::run()` is a stub; branch `feat/shell-event-loop-real-runtime` lands it in PR-18)
+- 🟡 WebView2 Discord.com/app yükler — runtime is built (`wry::WebViewBuilder::with_url`) but no event loop means no actual browser session
+- [ ] Login form görünür (email/password) — depends on event loop
+- [ ] MFA TOTP kodu girilebilir — depends on event loop
+- [x] Token keyring'e yazılır (DPAPI) — `windows-native-keyring-store` adapter exists (Faz 1.5)
+- [ ] Token ile `/users/@me` 200 döner — depends on real login flow (Faz 2.0 1b)
+- [x] `cargo test --workspace` 405+ pass — test count verified
+- [ ] Gerçek hesap test (insan test gerekli) — blocked on event loop + real auth
 
 ### 8.2 Time-to-Read/Write (Full MVP)
-- [x] Login sonrası guild listesi <2s yüklenir
-- [x] Kanal seçilince son 50 mesaj <500ms görünür (cache)
-- [x] Mesaj yazma <300ms Discord'a ulaşır
-- [x] Attachment indirilebilir (foyer pending)
-- [x] Restart sonrası cache'den <1s yükleme
+- [ ] Login sonrası guild listesi <2s yüklenir — depends on real auth + gateway spawn (Faz 3.0)
+- [ ] Kanal seçilince son 50 mesaj <500ms görünür (cache) — cache facade exists; depends on gateway event delivery
+- [ ] Mesaj yazma <300ms Discord'a ulaşır — depends on gateway spawn + REST POST in main loop
+- [ ] Attachment indirilebilir (foyer pending) — `foyer` disk cache is scaffold-only (Faz 4)
+- [ ] Restart sonrası cache'den <1s yükleme — moka + SQLite cache facade is real; depends on real restart
 - [ ] Gerçek 100+ mesajlik scroll test (insan test)
-- [ ] 1h soak: 0 crash (insan test)
+- [ ] 1h soak: 0 crash (insan test) — blocked on event loop
 
 ### 8.3 MVP v1.0 (Public Release)
 - [ ] Yukarıdaki tüm maddeler
@@ -477,21 +490,28 @@ Co-authored-by: Insan <insan@example.com>
 ## 14. Quick Reference: What's Blocking What
 
 ```
-MVP v0.1.0 blocker: NONE (WebGL hash resolved ✅)
+MVP v0.1.0 blocker: REAL EVENT LOOP (Shell::run stub — PR-18 follow-up)
+                     + REAL AUTH (/auth/login — Faz 2.0 1b, risky endpoint)
+                     + GATEWAY SPAWN (Faz 3.0; currently not in main.rs)
 
 Wave MVP-1 (Time-to-Login):
-  - WebView2 runtime: DONE ✅
+  - WebView2 runtime: DONE ✅ (real wry WebView on Windows)
+  - Shell::run() event loop: STUB 🟡 (PR-18 follow-up)
+  - IPC bridge to WebView2: SCAFFOLD 🟡 (router exists, not wired)
   - Auth real /auth/login: TODO (Faz 2.0 1b, risky endpoint)
-  - Insan test: REQUIRED
+  - TelemetryStore in main: SCAFFOLD 🟡 (Faz 1.5 Polish)
+  - Insan test: REQUIRED (blocked on event loop)
 
 Wave MVP-2 (Time-to-Read):
-  - Gateway: MOSTLY DONE (test pending)
-  - Cache: DONE ✅
+  - Gateway trait: DONE ✅ (real twilight Shard, lazy-connect)
+  - Gateway spawn in main.rs: NOT STARTED ❌ (Faz 3.0)
+  - Cache: DONE ✅ (moka + SQLite facade)
   - Message handling: SCAFFOLD (Faz 3.0 routing)
 
 Wave MVP-3 (Polish):
-  - Telemetry: DONE ✅
-  - Hotkeys: SCAFFOLD (global-hotkey binding pending)
+  - Telemetry store: DONE ✅
+  - Telemetry in main.rs: NOT WIRED 🟡
+  - Hotkeys: SCAFFOLD (Windows global-hotkey wired, no event dispatch)
   - UI render: TODO (iced panel)
 
 Wave MVP-4 (Release):
@@ -515,7 +535,7 @@ rg -c 'Unimplemented|unimplemented!\(\)|todo!\(\)|stub' crates/ frontend/src/ --
 
 ---
 
-**Audit prepared:** 2026-06-19 12:00 UTC+3  
+**Audit prepared:** 2026-06-19 12:00 UTC+3 (initial), 2026-06-20 (post-PR-1..PR-17 correction pass)
 **Audit scope:** Workspace root + crates/ + frontend/src  
 **Compliance:** `.cursorrules` Bölüm 1-15 (Rust 1.89 ed.2024, ADR-0006–0012, master index)  
-**Next action:** All MVP-1B + follow-up PRs merged (PR-1..PR-7, PR-8 local squash, PR-9 frontend IPC types, PR-10 shell refactor, PR-11 Dalga 1c CEF default, PR-12 auth token paste + MFA TOTP). Main at 83c4866. Remaining work is Faz 1.6 Dalga 2 (signed CEF binaries, code signing cert), Faz 3.0 gateway auth handshake, Faz 5+ plugin loader, Faz 7+ voice/video, Faz 8.0 release engineering (WiX signing, WinGet submission), and human-only tasks (24h soak test, Microsoft reviewer for WebView2 SxS).
+**Next action:** PR-18 (real `tao::EventLoop` + WebView attach in `Shell::run()` + IPC bridge wiring) on branch `feat/shell-event-loop-real-runtime`, then Faz 1.6 Dalga 2 (signed CEF binary distribution, code signing cert), Faz 2.0 1b auth `/auth/login` (risky endpoint, insan review required), Faz 3.0 gateway spawn in `main.rs` + reconnect logic, Faz 5+ plugin loader, Faz 7+ voice/video, Faz 8.0 release engineering (WiX signing, WinGet submission), and human-only tasks (24h soak test, Microsoft reviewer for WebView2 SxS).
