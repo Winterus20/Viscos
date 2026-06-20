@@ -22,6 +22,10 @@
 //! - ADR-0012 §3 — `viscos.ipc` bridge protocol.
 //! - [`phase-1.0-window-webview.md` §3.3](../../.cursor/plans/phase-1.0-window-webview.md#33-viscos-ipc-iskelet).
 //! - ADR-0007 — error handling policy.
+//!
+//! **TypeScript mirror:** `frontend/src/ipc/` contains derived TS types.
+//! Source of truth is this crate. Run `cargo run -p codegen-ipc` to regenerate.
+//! See ADR-0012 §bridge.ts for the bridge contract.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
