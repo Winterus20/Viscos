@@ -10,6 +10,7 @@ description = "Viscos persistent + in-memory cache (SQLite WAL + moka TinyLFU + 
 
 [dependencies]
 viscos-core = { path = "../viscos-core" }
+viscos-config = { path = "../viscos-config" }
 viscos-error = { path = "../viscos-error" }
 
 # DB + connection pool
@@ -28,6 +29,7 @@ moka = { workspace = true }
 
 # Serde for tier config serialization
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Structured logging
 tracing = { workspace = true }
@@ -35,6 +37,11 @@ tracing = { workspace = true }
 # Error handling (thiserror enum + From impl'leri, ADR-0007)
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+# Sync primitive — `Mutex<Connection>` for single-threaded repository impls
+# (Faz 4 moka future cache zaten thread-safe; SQLite pool thread-safe ama
+# raw connection değil — repository sync API için parking_lot mutex tercih edildi).
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

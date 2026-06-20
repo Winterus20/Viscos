@@ -6,7 +6,13 @@
 //! 3. Env var override: `VISCOS_APP__NAME=foo`, `VISCOS_LOGGING__LEVEL=debug`
 //!    `__` separator ile nested path; `convert-case` crate ile kebab-case ↔ snake_case.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
+
+pub mod path;
+
+pub use path::resolve_cache_dir;
 
 /// Root konfigürasyon tipi.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -21,6 +27,8 @@ pub struct Config {
     pub webview: WebviewConfig,
     #[serde(default)]
     pub watchdog: WatchdogConfig,
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +125,61 @@ impl Default for WatchdogConfig {
     }
 }
 
+/// Cache katmanı konfigürasyonu (Faz 4.0 Dalga 1, ADR-0010).
+///
+/// Üç alanı tüketir:
+/// - `data_dir` — cache kök dizini (varsayılan: `dirs::data_local_dir() + "viscos/cache"`).
+/// - `sqlite_path` — SQLite WAL dosya yolu (`data_dir/cache.db` default).
+/// - `max_size_mb` — RAM tier (moka) kapasite üst sınırı; default 64 MB (ADR-0010 §B).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Cache kök dizini (parent SQLite dosyaları için kullanılır).
+    pub data_dir: PathBuf,
+    /// SQLite WAL dosya yolu. `data_dir/cache.db` default'u ile doldurulur.
+    pub sqlite_path: PathBuf,
+    /// moka RAM tier byte cinsinden kapasite. ADR-0010 §B: 64 MB default.
+    pub max_size_mb: u64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        let data_dir = resolve_cache_dir().unwrap_or_else(|_| PathBuf::from("./cache"));
+        let sqlite_path = data_dir.join("cache.db");
+        Self {
+            data_dir,
+            sqlite_path,
+            max_size_mb: 64,
+        }
+    }
+}
+
+impl CacheConfig {
+    /// Construct from explicit overrides (used by tests + callers that bypass
+    /// the layered loader).
+    pub fn new(data_dir: PathBuf, max_size_mb: u64) -> Self {
+        let sqlite_path = data_dir.join("cache.db");
+        Self {
+            data_dir,
+            sqlite_path,
+            max_size_mb,
+        }
+    }
+
+    /// Layered load + typed deserialize for the cache section. Returns
+    /// [`ConfigError`](config::ConfigError) on parse / IO failure.
+    pub fn load() -> Result<Self, config::ConfigError> {
+        let cfg = Config::load()?;
+        Ok(cfg.cache)
+    }
+
+    /// Variant that derives from an already-loaded [`Config`] — preferred entry
+    /// point when the application already holds the root config (avoids re-parse).
+    #[must_use]
+    pub fn from_config(cfg: &Config) -> Self {
+        cfg.cache.clone()
+    }
+}
+
 impl Config {
     /// Layered config load: default → local → env override.
     pub fn load() -> Result<Self, config::ConfigError> {
@@ -176,5 +239,37 @@ mod tests {
         assert_eq!(cfg.watchdog.gdi_warn, 7000);
         assert_eq!(cfg.watchdog.gdi_critical, 9000);
         assert_eq!(cfg.watchdog.sample_interval_secs, 30);
+    }
+
+    #[test]
+    fn cache_config_default_provides_paths() {
+        let cfg = CacheConfig::default();
+        // data_dir'in altında sqlite_path olmalı.
+        assert!(cfg.sqlite_path.starts_with(&cfg.data_dir));
+        assert_eq!(cfg.max_size_mb, 64);
+    }
+
+    #[test]
+    fn cache_config_new_computes_sqlite_path() {
+        let cfg = CacheConfig::new(PathBuf::from("/tmp/viscos-cache"), 128);
+        assert_eq!(cfg.data_dir, PathBuf::from("/tmp/viscos-cache"));
+        assert_eq!(cfg.sqlite_path, PathBuf::from("/tmp/viscos-cache/cache.db"));
+        assert_eq!(cfg.max_size_mb, 128);
+    }
+
+    #[test]
+    fn cache_config_from_config_returns_clone() {
+        let cfg = Config::default();
+        let cache = CacheConfig::from_config(&cfg);
+        assert_eq!(cache.max_size_mb, cfg.cache.max_size_mb);
+    }
+
+    #[test]
+    fn cache_config_round_trip_via_toml() {
+        let cfg = CacheConfig::new(PathBuf::from("/var/viscos"), 256);
+        let s = toml::to_string(&cfg).expect("serialize");
+        let back: CacheConfig = toml::from_str(&s).expect("deserialize");
+        assert_eq!(back.data_dir, PathBuf::from("/var/viscos"));
+        assert_eq!(back.max_size_mb, 256);
     }
 }

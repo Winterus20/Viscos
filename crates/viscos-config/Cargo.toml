@@ -11,7 +11,9 @@ description = "Viscos typed configuration loader (config-rs) with TOML + env var
 [dependencies]
 config = { workspace = true }
 serde = { workspace = true }
+dirs = { workspace = true }
 
 [dev-dependencies]
 # Config struct'ın serialize/deserialize round-trip testi için.
 toml = "0.8"
+tempfile = { workspace = true }
