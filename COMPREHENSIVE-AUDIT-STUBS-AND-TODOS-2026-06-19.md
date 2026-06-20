@@ -518,4 +518,4 @@ rg -c 'Unimplemented|unimplemented!\(\)|todo!\(\)|stub' crates/ frontend/src/ --
 **Audit prepared:** 2026-06-19 12:00 UTC+3  
 **Audit scope:** Workspace root + crates/ + frontend/src  
 **Compliance:** `.cursorrules` Bölüm 1-15 (Rust 1.89 ed.2024, ADR-0006–0012, master index)  
-**Next action:** PR-1 through PR-6 all merged (commits 368bb34, fc9571d, 57bcf89, 5db0096, 26c9a6b, <this commit>). MVP-1B infrastructure complete; Faz 2.0 Auth follow-up + Faz 8.0 release engineering remain.
+**Next action:** All MVP-1B PRs merged (PR-1 telemetry, PR-2 webview, PR-3 cache, PR-4 shell, PR-5 api, PR-6 meta, PR-7 hotfix). Local state clean at 0288715. Remaining follow-ups: (a) PR-4b: window.rs refactor (>400 satır soft limit); (b) Faz 2.0 Auth follow-up — Faz 1.6 Dalga 1c CEF default rollout.
