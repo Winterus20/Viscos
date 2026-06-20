@@ -518,4 +518,4 @@ rg -c 'Unimplemented|unimplemented!\(\)|todo!\(\)|stub' crates/ frontend/src/ --
 **Audit prepared:** 2026-06-19 12:00 UTC+3  
 **Audit scope:** Workspace root + crates/ + frontend/src  
 **Compliance:** `.cursorrules` Bölüm 1-15 (Rust 1.89 ed.2024, ADR-0006–0012, master index)  
-**Next action:** All MVP-1B PRs merged (PR-1 telemetry, PR-2 webview, PR-3 cache, PR-4 shell, PR-5 api, PR-6 meta, PR-7 hotfix). Local state clean at 0288715. Remaining follow-ups: (a) PR-4b: window.rs refactor (>400 satır soft limit); (b) Faz 2.0 Auth follow-up — Faz 1.6 Dalga 1c CEF default rollout.
+**Next action:** All MVP-1B + follow-up PRs merged (PR-1..PR-7, PR-8 local squash, PR-9 frontend IPC types, PR-10 shell refactor, PR-11 Dalga 1c CEF default, PR-12 auth token paste + MFA TOTP). Main at 83c4866. Remaining work is Faz 1.6 Dalga 2 (signed CEF binaries, code signing cert), Faz 3.0 gateway auth handshake, Faz 5+ plugin loader, Faz 7+ voice/video, Faz 8.0 release engineering (WiX signing, WinGet submission), and human-only tasks (24h soak test, Microsoft reviewer for WebView2 SxS).
