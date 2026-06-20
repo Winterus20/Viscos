@@ -8,7 +8,7 @@ use viscos_webview::{BackendKind, select_default_backend};
 fn current_backend_matches_select_default_when_auto() {
     let cfg = Config::default();
     let backend = CefManager::current_backend(&cfg);
-    let expected: CefBackendChoice = select_default_backend().into();
+    let expected: CefBackendChoice = select_default_backend(None).into();
     assert_eq!(backend, expected);
 }
 
@@ -34,7 +34,7 @@ fn current_backend_falls_back_to_platform_default_for_unknown_value() {
     let mut cfg = Config::default();
     cfg.webview.backend = "unknown-backend".to_string();
     let backend = CefManager::current_backend(&cfg);
-    let expected: CefBackendChoice = select_default_backend().into();
+    let expected: CefBackendChoice = select_default_backend(None).into();
     assert_eq!(backend, expected);
 }
 

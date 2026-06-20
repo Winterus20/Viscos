@@ -41,7 +41,7 @@ pub const DISCORD_APP_URL: &str = "https://discord.com/app";
 ///
 /// Production'da log + tray badge'de gösterilir.
 pub const PHASE_1_6_NOTE: &str =
-    "Faz 1.6 Dalga 1b/c — WebView2 runtime + CLI override + RDP/Win11 detection";
+    "Faz 1.6 Dalga 1c — Win11 CEF auto-default (telemetry-driven), WebView2 fallback, RDP detection";
 
 #[cfg(test)]
 mod tests {
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn resolve_backend_is_exposed() {
         // Lib API smoke: `resolve_backend` erişilebilir olmalı.
-        let _ = resolve_backend(Some("webview2"), None);
+        let _ = resolve_backend(Some("webview2"), None, None);
     }
 
     #[test]

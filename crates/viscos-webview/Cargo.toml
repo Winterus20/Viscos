@@ -20,6 +20,8 @@ tao-runtime-tests = []
 
 [dependencies]
 viscos-error = { path = "../viscos-error" }
+# Telemetry-driven CEF default decision (Faz 1.6 Dalga 1c, ADR-0012 §4).
+viscos-telemetry = { path = "../viscos-telemetry" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

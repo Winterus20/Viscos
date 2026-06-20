@@ -12,6 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use viscos_error::{Result, ViscosError};
+use viscos_telemetry::store::{CefRecommendation, TelemetryStore};
 
 use crate::DISCORD_APP_URL;
 
@@ -176,25 +177,39 @@ pub trait WebViewWindow: Send + Sync + std::fmt::Debug {
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
-/// Faz 1.0 default backend seçimi (config override Faz 1.6).
+/// Faz 1.6 Dalga 1c — telemetry-driven default backend seçimi.
 ///
-/// **Öncelik sırası** (Faz 1.6 kararı, ADR-0012 §4):
-/// 1. Config override (`config.toml [webview].backend`)
-/// 2. RDP session auto-detect → CEF zorla
-/// 3. Telemetry override (≥10 restart/24h → CEF, Faz 1.5 sonrası)
-/// 4. Platform default: Win11 build ≥ 22000 → CEF, aksi → WebView2
+/// **Öncelik sırası** (ADR-0012 §4):
+/// 1. RDP session → `WebView2` (CEF GPU pipeline RDP ile uyumsuz).
+/// 2. Windows 10 veya altı → `WebView2`.
+/// 3. Windows 11 + telemetry `Required` (peak GDI ≥ 8500) → `Cef`.
+/// 4. Windows 11 + telemetry `Optional` (GDI stabil) → `WebView2`.
+/// 5. Windows 11 + telemetry `Unknown` veya telemetry `None` → `Cef` (default).
 ///
-/// **B1 kararı (USER-APPROVED):** Default build → CEF stub (`Err(Unimplemented)`).
-/// Feature ON (`--features viscos-webview/cef-backend`) → gerçek runtime.
-/// Win11 default olarak CEF'i **önerir** ama feature kapalıysa WebView2'ye
-/// fallback yapar (production binary CEF feature ON ile derlenmeli).
+/// `cef-backend` feature kapalıyken `Cef` seçilse bile `CefBackend::create_window()`
+/// `ViscosError::Unimplemented` döner — runtime stub fallback. Production binary'lerde
+/// `--features viscos-webview/cef-backend` ile derlenmeli.
 #[must_use]
-pub fn select_default_backend() -> BackendKind {
-    if cfg!(target_os = "windows") && is_windows_11() && cfg!(feature = "cef-backend") {
-        BackendKind::Cef
-    } else {
-        BackendKind::WebView2
+pub fn select_default_backend(telemetry: Option<&TelemetryStore>) -> BackendKind {
+    // RDP session → WebView2: CEF'in GPU pipeline'ı RDP ile uyumsuz.
+    if is_rdp_session() {
+        return BackendKind::WebView2;
     }
+    // Windows 10 veya altı → WebView2 (GDI leak Win11'e özgü).
+    if !is_windows_11() {
+        return BackendKind::WebView2;
+    }
+    // Windows 11: son 7 günlük GDI telemetrisine göre karar.
+    if let Some(store) = telemetry {
+        match store.recommend_cef() {
+            CefRecommendation::Required => return BackendKind::Cef,
+            CefRecommendation::Optional => return BackendKind::WebView2,
+            // Unknown → fall through to CEF default below.
+            CefRecommendation::Unknown => {}
+        }
+    }
+    // Windows 11 + telemetry yok veya Unknown → CEF default (ADR-0012 §4 B1).
+    BackendKind::Cef
 }
 
 /// Windows 11 build number tespiti (`build >= 22000`).
@@ -238,16 +253,15 @@ pub fn is_rdp_session() -> bool {
     }
 }
 
-/// Resolve `BackendKind` from CLI + config + platform priority chain.
+/// Resolve `BackendKind` from CLI + config + telemetry priority chain.
 ///
-/// **Öncelik sırası** (Faz 1.6 Dalga 1c):
+/// **Öncelik sırası** (Faz 1.6 Dalga 1c, ADR-0012 §4):
 /// 1. CLI override (`--backend=webview2|cef|auto`) — wins.
 /// 2. Config override (`config.toml [webview].backend`).
-/// 3. RDP session auto-detect → `Cef`.
-/// 4. Win11 + cef-backend feature → `Cef`.
-/// 5. Fallback → `WebView2`.
+/// 3. Telemetry-driven auto-detect: RDP → WebView2, Win10 → WebView2,
+///    Win11+Required → CEF, Win11+Optional → WebView2, Win11+Unknown/None → CEF.
 ///
-/// "auto" değeri (CLI veya config) auto-detect'e düşer.
+/// "auto" değeri (CLI veya config) ve boş config auto-detect'e düşer.
 ///
 /// # Errors
 ///
@@ -256,48 +270,37 @@ pub fn is_rdp_session() -> bool {
 pub fn resolve_backend(
     cli_override: Option<&str>,
     config_override: Option<&str>,
+    telemetry: Option<&TelemetryStore>,
 ) -> Result<BackendKind> {
     // 1. CLI override en yüksek öncelik.
     if let Some(value) = cli_override {
-        return parse_backend_value(value);
+        return parse_backend_value(value, telemetry);
     }
 
     // 2. Config override (boş/auto ise auto-detect'e düş).
     if let Some(value) = config_override {
         let trimmed = value.trim();
         if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("auto") {
-            return parse_backend_value(value);
+            return parse_backend_value(value, telemetry);
         }
     }
 
-    // 3-5. Auto-detect (RDP > Win11+CEF > WebView2).
-    let mut chosen = select_default_backend();
-    if cfg!(target_os = "windows") && is_rdp_session() {
-        chosen = BackendKind::Cef;
-    }
-    Ok(chosen)
+    // 3. Telemetry-driven auto-detect.
+    Ok(select_default_backend(telemetry))
 }
 
 /// String'i `BackendKind`'e parse et (case-insensitive).
 ///
-/// "auto" → `Ok(BackendKind::WebView2)` (auto-detect default fallback).
+/// "auto" → `select_default_backend(telemetry)` (telemetry-driven auto-detect).
 ///
 /// # Errors
 ///
 /// Bilinmeyen backend string'i `ViscosError::Media` ile döner.
-fn parse_backend_value(value: &str) -> Result<BackendKind> {
+fn parse_backend_value(value: &str, telemetry: Option<&TelemetryStore>) -> Result<BackendKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "webview2" => Ok(BackendKind::WebView2),
         "cef" => Ok(BackendKind::Cef),
-        "auto" => {
-            // "auto" → auto-detect. CLI sözleşmesi: explicit `auto` da
-            // resolve zincirinin 3-5. adımına (RDP > Win11 > WebView2) düşer.
-            let mut chosen = select_default_backend();
-            if cfg!(target_os = "windows") && is_rdp_session() {
-                chosen = BackendKind::Cef;
-            }
-            Ok(chosen)
-        }
+        "auto" => Ok(select_default_backend(telemetry)),
         other => Err(viscos_error::ViscosError::Media(format!(
             "unknown backend '{other}' (expected: webview2 | cef | auto)"
         ))),
@@ -329,10 +332,8 @@ mod tests {
 
     #[test]
     fn select_default_backend_returns_a_known_kind() {
-        // Faz 1.0: Win11 ise CEF, değilse WebView2.
-        // CI `windows-latest` runner'lar Win11 (build >= 22000) olduğu için CEF beklenir.
-        // Linux/macOS'ta WebView2 beklenir.
-        let kind = select_default_backend();
+        // Telemetry None → platform default. Win11 → Cef, Win10/non-Windows → WebView2.
+        let kind = select_default_backend(None);
         assert!(
             matches!(kind, BackendKind::WebView2 | BackendKind::Cef),
             "select_default_backend must return a known kind, got {kind:?}"

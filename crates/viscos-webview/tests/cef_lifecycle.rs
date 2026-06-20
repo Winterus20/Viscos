@@ -100,7 +100,7 @@ fn mock_cef_browser_handle() {
 #[test]
 fn resolve_backend_cef_with_cli_override() {
     // CLI override "cef" → backend seçimi.
-    let kind = resolve_backend(Some("cef"), None).expect("valid CLI override");
+    let kind = resolve_backend(Some("cef"), None, None).expect("valid CLI override");
     assert_eq!(kind, BackendKind::Cef);
 }
 
@@ -109,7 +109,7 @@ fn resolve_backend_configured_cef_falls_through_to_default() {
     // Config "cef" (CLI yok) → auto-detect (RDP/Win11 kontrolü).
     // Bu test non-Windows ve RDP-dışı runner'da çalışırsa WebView2'ye düşer
     // (feature-gated stub default davranışı).
-    let kind = resolve_backend(None, Some("cef")).expect("valid config override");
+    let kind = resolve_backend(None, Some("cef"), None).expect("valid config override");
     // Result config override yüzünden her zaman Cef olmalı (RDP/auto'ya düşmez).
     assert_eq!(kind, BackendKind::Cef);
 }

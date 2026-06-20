@@ -94,7 +94,7 @@ async fn run() -> Result<()> {
     );
 
     // 4. WebView backend seçimi (CLI > config > RDP > Win11/CEF > WebView2).
-    let backend = resolve_backend(Some(&cli.backend), Some(&config.webview.backend))
+    let backend = resolve_backend(Some(&cli.backend), Some(&config.webview.backend), None)
         .context("resolving WebView backend")?;
     info!(
         backend = backend.as_str(),
@@ -197,16 +197,16 @@ mod tests {
         // çünkü parse() exit yapar; bu yüzden default_value attribute'u source check.
         // Burada sadece resolve_backend zincirinin `auto` → default_backend'e
         // düştüğünü doğruluyoruz.
-        let kind = viscos_webview::resolve_backend(None, Some("auto")).unwrap();
+        let kind = viscos_webview::resolve_backend(None, Some("auto"), None).unwrap();
         assert!(matches!(kind, BackendKind::WebView2 | BackendKind::Cef));
     }
 
     #[test]
     fn cli_explicit_backend_passed_through() {
         // CLI override en yüksek öncelik — config ne olursa olsun.
-        let kind = viscos_webview::resolve_backend(Some("cef"), Some("webview2")).unwrap();
+        let kind = viscos_webview::resolve_backend(Some("cef"), Some("webview2"), None).unwrap();
         assert_eq!(kind, BackendKind::Cef);
-        let kind = viscos_webview::resolve_backend(Some("webview2"), Some("cef")).unwrap();
+        let kind = viscos_webview::resolve_backend(Some("webview2"), Some("cef"), None).unwrap();
         assert_eq!(kind, BackendKind::WebView2);
     }
 }

@@ -18,6 +18,9 @@ todos:
   - id: msi-fixture
     content: WiX fixture (viscos.wxs BACKEND preprocessor + UpgradeCode GUID placeholder)
     status: completed
+  - id: dalga-1c-telemetry
+    content: "Win11 CEF auto-default telemetry-driven (select_default_backend + TelemetryStore) — Dalga 1c PR"
+    status: completed
   - id: cef-binary-build
     content: "Gerçek cef::BrowserHost::CreateBrowser call — PR-2 sonrası release engineering"
     status: pending
@@ -34,9 +37,9 @@ todos:
 
 # Phase 1.6 — CEF Default Rollout Dalga 1b (Implementation Status)
 
-> **Dalga:** 1a + 1b + 1c tamamlandı (PR-2 ile birleşik)
-> **Tarih:** 2026-06-19
-> **Durum:** Dalga 1a (WebView2 real runtime) ✅, Dalga 1b (CEF feature-gated stub) ✅, Dalga 1c (CLI + backend detection) ✅ — Faz 1.6 release engineering (gerçek `cef::BrowserHost::CreateBrowser`, V8 bridge, crashpad, 24h soak) **release engineering PR'larına bırakıldı**.
+> **Dalga:** 1a + 1b + 1c tamamlandı (PR-2 ile birleşik); Dalga 1c telemetry-driven CEF default eklendi (bu PR)
+> **Tarih:** 2026-06-19 / 2026-06-20 (Dalga 1c telemetry)
+> **Durum:** Dalga 1a (WebView2 real runtime) ✅, Dalga 1b (CEF feature-gated stub) ✅, Dalga 1c (CLI + backend detection) ✅, Dalga 1c telemetry-driven Win11 CEF default ✅ — Faz 1.6 release engineering (gerçek `cef::BrowserHost::CreateBrowser`, V8 bridge, crashpad, 24h soak) **release engineering PR'larına bırakıldı**.
 > **Önceki doküman:** [`phase-1.6-cef-default-rollout.md`](./phase-1.6-cef-default-rollout.md) (orijinal plan, ADR-0012 §6 ile genişletildi).
 > **Sonraki adım:** Faz 2.0 (Auth) — `phase-2.0-discord-api.md` ve Faz 8.0 (Release Engineering) — `phase-8.0-distribution.md`.
 
@@ -96,7 +99,24 @@ todos:
 | `is_rdp_session()` detection | ✅ | ADR-0012 §6 uyumlu — `GetSystemMetrics(SM_REMOTESESSION)` |
 | `is_windows_11()` detection | ✅ | `GetVersionExW` build ≥22000 |
 | CLI wins → config fallback → auto resolution | ✅ | Test: CLI wins, config fallback, auto resolution |
-| RDP session → CEF force (ADR-0012 §6) | ✅ | RDP → CEF (default Win11 davranışıyla uyumlu) |
+| RDP session → WebView2 (CEF GPU pipeline uyumsuz) | ✅ | RDP → WebView2 (Dalga 1c telemetry PR ile güncellendi) |
+
+### 2.4 Dalga 1c Telemetry-Driven CEF Default (Tamamlandı ✅)
+
+**Bu PR ile eklendi.**
+
+| Madde | Durum | Notlar |
+|-------|-------|--------|
+| `select_default_backend(telemetry: Option<&TelemetryStore>)` | ✅ | `crates/viscos-webview/src/backend.rs` |
+| `resolve_backend(cli, config, telemetry)` 3. param | ✅ | Signature güncellendi; `main.rs` `None` ile çağırır |
+| Win11 + no telemetry → CEF default | ✅ | ADR-0012 §4 B1 |
+| Win11 + `Required` telemetry → CEF | ✅ | GDI peak ≥ 8500 |
+| Win11 + `Optional` telemetry → WebView2 | ✅ | GDI stabil |
+| Win11 + `Unknown` telemetry → CEF (fall-through) | ✅ | Empty store / cold start |
+| Win10 + any telemetry → WebView2 | ✅ | `!is_windows_11()` guard |
+| RDP → WebView2 | ✅ | CEF GPU pipeline RDP ile uyumsuz |
+| CLI override beats telemetry | ✅ | Test: `cli_override_wins_regardless_of_telemetry` |
+| `viscos-telemetry` dep added to `viscos-webview` | ✅ | `Cargo.toml` |
 
 ---
 
