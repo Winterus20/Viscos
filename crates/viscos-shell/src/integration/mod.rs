@@ -7,6 +7,7 @@
 //! - [`webview_refresh`]: WebView2 periyodik recreate (GDI leak mitigation).
 //!
 //! Modules:
+//! - [`audio`]: Windows WASAPI mute/deafen scaffold (MVP-3, non-Windows stub).
 //! - [`hotkeys`]: Global + window hotkeys (Ctrl+Shift+M, Ctrl+K, ...).
 //! - [`drag_drop`]: Drag & drop dosya paylaşımı (stub).
 //! - [`deep_link`]: `viscos://` URL parser + Windows registry registration (stub).
@@ -20,6 +21,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod audio;
 pub mod autostart;
 pub mod deep_link;
 pub mod drag_drop;
@@ -27,9 +29,13 @@ pub mod hotkeys;
 pub mod single_instance;
 pub mod webview_refresh;
 
+pub use audio::AudioController;
 pub use autostart::AutoLaunch;
 pub use deep_link::{DeepLinkAction, parse_viscos_url, register_protocol};
 pub use drag_drop::handle_drop;
-pub use hotkeys::{DEFAULT_BINDINGS, HotkeyAction, HotkeyBinding, HotkeyManager};
+pub use hotkeys::{
+    DEFAULT_BINDINGS, HotkeyAction, HotkeyBinding, HotkeyController, HotkeyEventStream,
+    HotkeyManager, parse_combo,
+};
 pub use single_instance::SingleInstance;
 pub use webview_refresh::{WebView2Refresher, WebViewRefreshConfig};

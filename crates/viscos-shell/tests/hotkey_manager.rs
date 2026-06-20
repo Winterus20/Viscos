@@ -6,13 +6,14 @@ use viscos_shell::integration::hotkeys::{
 };
 
 #[test]
-fn default_bindings_contain_four_actions() {
-    assert_eq!(DEFAULT_BINDINGS.len(), 4);
+fn default_bindings_contain_five_actions() {
+    assert_eq!(DEFAULT_BINDINGS.len(), 5);
     let actions: Vec<HotkeyAction> = DEFAULT_BINDINGS.iter().map(|(_, a)| *a).collect();
     assert!(actions.contains(&HotkeyAction::ToggleMute));
     assert!(actions.contains(&HotkeyAction::ToggleDeafen));
     assert!(actions.contains(&HotkeyAction::QuickSwitcher));
     assert!(actions.contains(&HotkeyAction::OpenSettings));
+    assert!(actions.contains(&HotkeyAction::ToggleDevtools));
 }
 
 #[test]
