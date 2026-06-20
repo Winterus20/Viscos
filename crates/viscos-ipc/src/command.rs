@@ -28,15 +28,43 @@ use crate::types::IpcCommandError;
 #[non_exhaustive]
 pub enum IpcCommand {
     // -----------------------------------------------------------------------
-    // Auth (Faz 2.0 1b)
+    // Auth (Faz 2.0 C3 — token paste + MFA TOTP)
     // -----------------------------------------------------------------------
+    /// Kullanıcının Discord'dan kopyaladığı token'ı yapıştır.
+    ///
+    /// C3 (token paste fallback) akışı — `/auth/login` kullanılmaz (ToS risk,
+    /// undocumented). Token format validate edilir, keyring'e yazılır.
+    /// `GET /users/@me` doğrulaması shell handler'da yapılır.
+    AuthPasteToken {
+        /// Ham Discord auth token (kullanıcı clipboard'dan yapıştırır).
+        token: String,
+    },
+    /// MFA TOTP challenge — base32 TOTP secret'tan 6 haneli kod üret.
+    ///
+    /// Üretilen kod `POST /api/v10/auth/mfa/totp`'a gönderilir (documented,
+    /// ToS-safe endpoint). Secret keyring'e yazılmaz — sadece kod üretilir.
+    AuthValidateMfa {
+        /// Base32 kodlu TOTP secret (kullanıcının authenticator uygulamasından).
+        totp_secret: String,
+    },
+    /// Oturumu kapat — token'ı keyring'den sil, gateway disconnect tetikle.
+    AuthLogout,
+    /// Mevcut auth durumunu sorgula (token var mı, user_id nedir).
+    ///
+    /// Cevap: `{"authenticated": bool, "user_id": Option<String>}`.
+    AuthGetStatus,
+
     /// Login başlat — token'ı validate et ve gateway connect tetikle.
+    ///
+    /// Geriye dönük uyumluluk: Faz 2.0 1b'den miras kalan komut.
     LoginRequest {
         /// Keyring'den okunacak mevcut kullanıcı token'ı (keyring boşsa
         /// explicit token geçilebilir).
         token: Option<String>,
     },
     /// Oturumu kapat — token'ı keyring'den sil, gateway disconnect.
+    ///
+    /// Geriye dönük uyumluluk: `AuthLogout` tercih edilir.
     Logout {},
 
     // -----------------------------------------------------------------------
@@ -219,5 +247,53 @@ mod tests {
             IpcCommand::LoginRequest { token } => assert_eq!(token.as_deref(), Some("xyz")),
             _ => panic!("LoginRequest round-trip failed"),
         }
+    }
+
+    #[test]
+    fn auth_paste_token_round_trip() {
+        let cmd = IpcCommand::AuthPasteToken {
+            token: "NTkw.abc.def".into(),
+        };
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        assert!(json.contains("\"type\":\"AuthPasteToken\""));
+        let back: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            IpcCommand::AuthPasteToken { token } => assert_eq!(token, "NTkw.abc.def"),
+            _ => panic!("AuthPasteToken round-trip failed"),
+        }
+    }
+
+    #[test]
+    fn auth_validate_mfa_round_trip() {
+        let cmd = IpcCommand::AuthValidateMfa {
+            totp_secret: "GEZDGNBVGY3TQOJQ".into(),
+        };
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        assert!(json.contains("\"type\":\"AuthValidateMfa\""));
+        let back: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            IpcCommand::AuthValidateMfa { totp_secret } => {
+                assert_eq!(totp_secret, "GEZDGNBVGY3TQOJQ")
+            }
+            _ => panic!("AuthValidateMfa round-trip failed"),
+        }
+    }
+
+    #[test]
+    fn auth_logout_round_trip() {
+        let cmd = IpcCommand::AuthLogout;
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        assert!(json.contains("\"type\":\"AuthLogout\""));
+        let back: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(back, IpcCommand::AuthLogout));
+    }
+
+    #[test]
+    fn auth_get_status_round_trip() {
+        let cmd = IpcCommand::AuthGetStatus;
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        assert!(json.contains("\"type\":\"AuthGetStatus\""));
+        let back: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(back, IpcCommand::AuthGetStatus));
     }
 }

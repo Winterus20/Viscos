@@ -5,6 +5,10 @@
 //! - [`storage`]: `keyring-core 1.0` + `windows-native-keyring-store 1.1`
 //!   (DPAPI arkası) ile Discord token saklama. `service = "Viscos"`,
 //!   `user = user_id` (Discord snowflake). Multi-account v2 için altyapı hazır.
+//! - [`token`]: `DiscordToken` newtype (ZeroizeOnDrop-aware) + `TokenStore` trait.
+//!   `WindowsCredentialStore` production impl'i DPAPI üzerinden saklar.
+//! - [`flow`]: C3 (token paste + MFA TOTP) auth akış yöneticisi.
+//!   `/auth/login` kullanılmaz (ToS risk, undocumented) — ADR-0011 §1.
 //! - [`login`]: Email/şifre, QR ve token yapıştırma akışları.
 //!   Discord captcha → `LoginResult::CaptchaRequired { url }`.
 //! - [`mfa`]: TOTP (`totp-rs 5.7`) + backup codes (plaintext, 8-char alphanumeric).
@@ -17,19 +21,23 @@
 //! `Secret::new` yerine `SecretString::new` veya `SecretString::from`
 //! kullanılır.
 //!
-//! **Scope guard:** Faz 2.0 dalgası sadece login + REST auth handshake.
+//! **Scope guard:** Faz 2.0 dalgası sadece token paste + MFA TOTP akışları.
 //! Gateway (Faz 3), cache (Faz 4), voice (Faz 7) → sonraki dalga.
 
 pub mod disclaimer;
+pub mod flow;
 pub mod login;
 pub mod mfa;
 pub mod shadow_mode;
 pub mod storage;
 pub mod super_properties;
+pub mod token;
 
+pub use flow::{AuthFlow, AuthManager, AuthSession};
 pub use login::{LoginResult, QrSession};
 pub use shadow_mode::ShadowMode;
 pub use storage::{AuthError, AuthStorage, StoredAccount};
+pub use token::{DiscordToken, TokenStore};
 
 /// `keyring-core` servis adı — Windows Credential Manager ve diğer native
 /// store'lar bu string'i uygulama kimliği olarak gösterir (kullanıcı
