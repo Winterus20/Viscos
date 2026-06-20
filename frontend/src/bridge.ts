@@ -10,36 +10,21 @@
  * **Pull-based IPC:** Rust → JS push is restricted to small events only.
  * Large state transfers must use `await viscos.invoke(cmd)` (Faz 4 SharedBuffer).
  *
+ * **Type source of truth:** `crates/viscos-ipc` Rust crate. TS types in
+ * `./ipc/` are derived from it (PR-5 follow-up, ADR-0012 §bridge.ts).
+ *
  * Cross-references:
  * - ADR-0012 §2 — selector resilience rules.
  * - [`webview2-hardening.md`](../../.cursor/plans/webview2-hardening.md) §3 — pull-based IPC pattern.
  * - [`crates/viscos-ipc`](../../crates/viscos-ipc) — Rust-side command/event enums.
  */
 
-/**
- * Tagged-union IPC command matching `crates/viscos-ipc/src/command.rs::IpcCommand`.
- *
- * Adding a new variant here **must** be mirrored in the Rust `IpcCommand` enum
- * (single source of truth: Rust side).
- */
-export type IpcCommand =
-  | { type: 'GetUnreadCount'; data: { guild_id: number | null } }
-  | { type: 'Navigate'; data: { url: string } }
-  | { type: 'SetTheme'; data: { theme: string } };
+export type { IpcCommand } from './ipc/commands.js';
+export type { IpcEvent, WatchdogKind } from './ipc/events.js';
+export type { IpcCommandError, IpcCommandResult, IpcEventError, IpcEventResult } from './ipc/types.js';
 
-/**
- * Tagged-union IPC event matching `crates/viscos-ipc/src/event.rs::IpcEvent`.
- */
-export type IpcEvent =
-  | { kind: 'UnreadCountChanged'; payload: { count: number } }
-  | { kind: 'ThemeChanged'; payload: { theme: string } }
-  | { kind: 'WatchdogAlert'; payload: { kind: WatchdogKind; message: string } };
-
-export type WatchdogKind =
-  | 'gdi_leak_warning'
-  | 'gdi_leak_critical'
-  | 'ipc_buffer_warning'
-  | 'ipc_buffer_critical';
+import type { IpcCommand } from './ipc/commands.js';
+import type { IpcEvent } from './ipc/events.js';
 
 /**
  * Discord webpack module proxy — Vencord pattern.
@@ -60,13 +45,15 @@ export interface ViscosApi {
   /**
    * Pull-based IPC: send a command and await a typed response.
    *
-   * Throws if the Rust handler returns an error (e.g. `ViscosError::Unimplemented`
-   * during Faz 1.0 — see `crates/viscos-ipc/src/router.rs::StubHandler`).
+   * Throws an `IpcCommandError`-shaped object if the Rust handler returns
+   * an error (e.g. `IpcCommandError::Unimplemented` during Phase 1.0 stubs —
+   * see `crates/viscos-ipc/src/router.rs::StubHandler`).
    */
   invoke<T = unknown>(cmd: IpcCommand): Promise<T>;
 
   /**
-   * Subscribe to small Rust → JS events (tray badge, watchdog alert, theme).
+   * Subscribe to small Rust → JS events (tray badge, watchdog alert, theme,
+   * login result, new message signal).
    *
    * Returns an unsubscribe function — **must be called on unmount** to avoid
    * the channel callback memory leak (tauri#13133).
