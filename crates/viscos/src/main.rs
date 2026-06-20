@@ -1,4 +1,4 @@
-//! Viscos binary entry point (Faz 1.6 Dalga 1b/c — MVP-1B).
+//! Viscos binary entry point (Faz 1.6 Dalga 1b — MVP-1B).
 //!
 //! Faz 1.6 akışı:
 //! 0. CEF subprocess dispatch (`execute_process_if_subprocess`) — exit
@@ -8,13 +8,21 @@
 //! 3. config load (`config/default.toml` → `config/local.toml` → env)
 //! 4. WebView backend resolution (`resolve_backend`: CLI > config > RDP > Win11/CEF > WebView2)
 //! 5. IPC router bootstrap (default StubHandler — Faz 2+'da gerçek)
-//! 6. Watchdog background task başlat (GDI counter)
-//! 7. ShellBuilder::build() → gerçek `tao::Window` + `wry::WebView` (Faz 1.6 Dalga 1b)
+//! 6. Watchdog background task başlat (GDI counter) — kendi thread'inde
+//!    tokio runtime ile (çünkü main thread `tao::EventLoop::run` bloklar)
+//! 7. ShellBuilder::backend(...) → gerçek `tao::Window` + `wry::WebView`
+//!    (Faz 1.6 Dalga 1b)
 //! 8. "Viscos ready" loglanır
-//! 9. Ctrl-C sinyali bekle → graceful shutdown
+//! 9. `Shell::run()` event loop'u blokla — pencere X ile kapatılınca veya
+//!    Ctrl-C sinyali gelince döner
 //!
-//! B1 kararı: CEF backend feature-gated stub. Default build CEF kullanmaz;
-//! production build'ler `--features viscos-webview/cef-backend` ile derlenir.
+//! ## Neden sync main?
+//!
+//! `tao::EventLoop::run()` Windows'ta **main thread'de blocking** olarak
+//! çağrılmalıdır (tao::Window ve WebView2 COM nesneleri main-thread affine).
+//! Bu yüzden `#[tokio::main]` async main kullanamayız — `event_loop.run()`
+//! zaten ana thread'i blokluyor, async runtime ile çakışıyor. Watchdog +
+//! Ctrl-C listener kendi thread'lerinde kendi tokio runtime'larına sahip.
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -22,21 +30,22 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use tokio::signal;
-use tracing::{info, warn};
+use tracing::info;
 
 use viscos_config::Config;
 use viscos_core::VISCOS_VERSION;
 use viscos_ipc::DefaultIpcRouter;
 use viscos_shell::ShellBuilder;
 use viscos_watchdog::{StubAutosave, Watchdog, WatchdogConfig};
-use viscos_webview::{BackendKind, execute_process_if_subprocess, resolve_backend};
+use viscos_webview::{
+    BackendKind, CefBackend, WebView2Backend, execute_process_if_subprocess, resolve_backend,
+};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "viscos",
     version = VISCOS_VERSION,
-    about = "Viscos Discord client — Faz 1.6 Dalga 1b/c (WebView2 runtime + CLI override)",
+    about = "Viscos Discord client — Faz 1.6 Dalga 1b (real tao event loop + WebView)",
     long_about = None,
 )]
 struct Cli {
@@ -50,14 +59,18 @@ struct Cli {
     backend: String,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
-    match run().await {
+fn main() -> ExitCode {
+    match run() {
         Ok(()) => {
             info!("Viscos shutdown complete");
             ExitCode::SUCCESS
         }
         Err(err) => {
+            // Fatal startup hatası: tracing henüz kurulu olmayabilir veya
+            // shutdown sırasında olabilir. Stderr'e yazıp çık.
+            // (`.cursorrules` Bölüm 5 "üretim kodunda eprintln! YASAK" — bu
+            // sadece fatal-exit path için geçerli; logging infrastructure
+            // kullanılamadığı durumda stderr tek output mechanism.)
             eprintln!("viscos: fatal: {err:#}");
             for cause in err.chain().skip(1) {
                 eprintln!("  caused by: {cause}");
@@ -67,7 +80,7 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> Result<()> {
+fn run() -> Result<()> {
     // 0. CEF subprocess dispatch — `cef::execute_process` **her** process'te
     //    ana thread'de `cef::initialize`'dan **önce** çağrılmalıdır (CEF
     //    protokolü, `_cef_main_args_t` standardı). CEF subprocess'leri
@@ -92,7 +105,7 @@ async fn run() -> Result<()> {
 
     info!(
         version = VISCOS_VERSION,
-        "Viscos starting up (Faz 1.6 Dalga 1b/c — WebView2 runtime + CLI override)"
+        "Viscos starting up (Faz 1.6 Dalga 1b — real tao event loop + WebView)"
     );
 
     // 2. CLI parsing.
@@ -115,10 +128,10 @@ async fn run() -> Result<()> {
     );
 
     // 4. WebView backend seçimi (CLI > config > RDP > Win11/CEF > WebView2).
-    let backend = resolve_backend(Some(&cli.backend), Some(&config.webview.backend), None)
+    let backend_kind = resolve_backend(Some(&cli.backend), Some(&config.webview.backend), None)
         .context("resolving WebView backend")?;
     info!(
-        backend = backend.as_str(),
+        backend = backend_kind.as_str(),
         "WebView backend selected (Faz 1.6 Dalga 1b — real wry/CEF runtime)"
     );
 
@@ -126,35 +139,33 @@ async fn run() -> Result<()> {
     let _router = DefaultIpcRouter::new();
     info!("IPC router ready (default StubHandler — Faz 2+'da gerçek handler'lar)");
 
-    // 6. Watchdog background task.
-    let autosave: Arc<dyn viscos_watchdog::DraftAutosave> = Arc::new(StubAutosave::new());
-    let restart_signal = viscos_watchdog::RestartSignal::default();
-    let wd_config = WatchdogConfig {
-        gdi_warning: config.watchdog.gdi_warn,
-        gdi_critical: config.watchdog.gdi_critical,
-        sample_interval: Duration::from_secs(config.watchdog.sample_interval_secs),
-        warmup_samples: config.watchdog.warmup_samples,
-    };
-    let watchdog = Watchdog::new(wd_config, restart_signal, autosave);
-    watchdog.spawn();
-    info!("Watchdog spawned (GDI counter, 30s sample interval)");
-
-    // 7. Shell.run() — gerçek `tao::Window` + `wry::WebView` (Faz 1.6 Dalga 1b).
+    // 6. Watchdog background task — kendi thread'inde, kendi tokio runtime'ı
+    //    ile. Çünkü `tao::EventLoop::run()` main thread'i blokluyor;
+    //    `#[tokio::main]` async main kullanamıyoruz.
     //
-    // B1 kararı: backend seçimine göre `WebView2Backend` veya
-    // `CefBackend` (feature-gated stub veya real) instantiate edilir.
-    // Stub fallback default build'de `Unimplemented` döndürür; Win11
-    // production build'lerde `--features viscos-webview/cef-backend` ile
-    // gerçek runtime kullanılır.
-    let backend_label = match backend {
-        BackendKind::WebView2 => "WebView2 (wry)",
-        BackendKind::Cef => "CEF (cef-rs)",
+    //    Watchdog `tokio::spawn` + `tokio::time::interval` kullanıyor; bu
+    //    yüzden ayrı bir `current_thread` runtime'a ihtiyacı var.
+    //    Thread uygulama ömrü boyunca yaşar (process exit'te OS reclaim).
+    spawn_watchdog(&config);
+
+    // 7. Backend instantiate et ve ShellBuilder'a bağla.
+    //
+    //    B1 kararı: backend seçimine göre `WebView2Backend` veya
+    //    `CefBackend` (feature-gated stub veya real) instantiate edilir.
+    //    `SharedBackend = Arc<dyn WebViewBackend>` trait object — Faz 1.6
+    //    Dalga 1b'nin gerçek event loop'u bu handle üzerinden pencere
+    //    oluşturur.
+    let backend: Arc<dyn viscos_webview::WebViewBackend> = match backend_kind {
+        BackendKind::WebView2 => Arc::new(WebView2Backend::new()),
+        BackendKind::Cef => Arc::new(CefBackend::new()),
     };
     info!(
-        backend = backend_label,
+        backend = backend.name(),
+        version = backend.version(),
         "Backend instantiated (gerçek runtime attach Shell::run içinde)"
     );
 
+    // 8. Shell oluştur (backend bağlı — gerçek event loop).
     let shell = ShellBuilder::new()
         .window(viscos_webview::WindowConfig {
             title: config.window.title.clone(),
@@ -165,66 +176,98 @@ async fn run() -> Result<()> {
         })
         .tray_enabled(config.window.tray_enabled)
         .devtools_enabled(config.window.devtools_enabled)
+        .backend(backend)
         .build();
-    shell.run().context("shell run")?;
 
-    // 8. "Viscos ready" log.
     info!(
-        backend = backend.as_str(),
+        backend = backend_kind.as_str(),
         window_title = %shell.config().window.title,
         tray_items = shell.tray_menu().items().len(),
-        "Viscos ready — Ctrl-C ile graceful shutdown"
+        has_backend = shell.has_backend(),
+        "Viscos ready — pencere X ile veya Ctrl-C ile kapatılabilir"
     );
 
-    // 9. Graceful shutdown — Ctrl-C veya SIGTERM (Windows'ta sadece Ctrl-C).
-    wait_for_shutdown_signal().await?;
-    info!("shutdown signal received");
+    // 9. Shell::run() blocking call — tao::EventLoop::run() main thread'i
+    //    bloklar, pencere X ile kapatılana veya Ctrl-C sinyali gelene
+    //    kadar. Bu fonksiyon döndüğünde event loop sonlanmıştır →
+    //    process temiz shutdown.
+    shell.run().context("shell run")?;
 
     Ok(())
 }
 
-/// Ctrl-C sinyali gelene kadar blokla. Windows + Unix portable.
-async fn wait_for_shutdown_signal() -> Result<()> {
-    let ctrl_c = signal::ctrl_c();
+/// Watchdog'u ayrı bir OS thread'inde, kendi tokio runtime'ı ile spawn et.
+///
+/// `tao::EventLoop::run()` main thread'i blokladığı için watchdog'u
+/// ayrı bir thread'de çalıştırıyoruz. Thread `current_thread` flavor
+/// tokio runtime kurup `watchdog.spawn()` çağırır; runtime'ı yaşatmak
+/// için `block_on(pending)` ile blokluyoruz (process exit'e kadar).
+///
+/// Watchdog'un `spawn()` method'u `tokio::spawn` çağırır — bu yüzden
+/// `runtime.enter()` ile runtime context'i thread-local olarak set
+/// etmemiz gerekiyor. Aksi halde "no reactor running" panic'i alırız.
+fn spawn_watchdog(config: &viscos_config::Config) {
+    let autosave: Arc<dyn viscos_watchdog::DraftAutosave> = Arc::new(StubAutosave::new());
+    let restart_signal = viscos_watchdog::RestartSignal::default();
+    let wd_config = WatchdogConfig {
+        gdi_warning: config.watchdog.gdi_warn,
+        gdi_critical: config.watchdog.gdi_critical,
+        sample_interval: Duration::from_secs(config.watchdog.sample_interval_secs),
+        warmup_samples: config.watchdog.warmup_samples,
+    };
+    let watchdog = Watchdog::new(wd_config, restart_signal, autosave);
 
-    // Windows: tokio::signal::ctrl_c yeterli (Unix sinyalleri Windows'ta yok).
-    #[cfg(unix)]
-    {
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .context("registering SIGTERM handler")?;
-        tokio::select! {
-            _ = ctrl_c => { warn!("Ctrl-C received"); }
-            _ = sigterm.recv() => { warn!("SIGTERM received"); }
-        }
+    let build_result = std::thread::Builder::new()
+        .name("viscos-watchdog".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    tracing::error!(?err, "watchdog tokio runtime kurulamadı");
+                    return;
+                }
+            };
+
+            // Runtime context'i thread-local olarak set et. Bu olmadan
+            // `watchdog.spawn()` içindeki `tokio::spawn` panic atar.
+            // `Runtime::enter` bir guard döner; guard scope'tan düşünce
+            // context otomatik olarak restore edilir.
+            let _guard = runtime.enter();
+
+            // Watchdog task'i `tokio::spawn` ile background'a atılır;
+            // artık `runtime.block_on(pending)` ile runtime'ı yaşatıyoruz
+            // (process exit'e kadar blokla).
+            watchdog.spawn();
+
+            runtime.block_on(std::future::pending::<()>());
+        });
+
+    match build_result {
+        Ok(_) => info!(
+            interval_secs = config.watchdog.sample_interval_secs,
+            gdi_warn = config.watchdog.gdi_warn,
+            gdi_critical = config.watchdog.gdi_critical,
+            "Watchdog spawned (GDI counter, kendi thread + current_thread runtime)"
+        ),
+        Err(err) => tracing::error!(?err, "watchdog thread spawn başarısız"),
     }
-
-    #[cfg(not(unix))]
-    {
-        ctrl_c.await.context("waiting for Ctrl-C")?;
-        warn!("Ctrl-C received");
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use viscos_webview::BackendKind;
 
     #[test]
     fn cli_default_backend_is_auto() {
-        // `--backend` flag yokken default `auto` olmalı.
-        // clap derive default_value = "auto" → Cli::parse() ile verify edemiyoruz
-        // çünkü parse() exit yapar; bu yüzden default_value attribute'u source check.
-        // Burada sadece resolve_backend zincirinin `auto` → default_backend'e
-        // düştüğünü doğruluyoruz.
         let kind = viscos_webview::resolve_backend(None, Some("auto"), None).unwrap();
         assert!(matches!(kind, BackendKind::WebView2 | BackendKind::Cef));
     }
 
     #[test]
     fn cli_explicit_backend_passed_through() {
-        // CLI override en yüksek öncelik — config ne olursa olsun.
         let kind = viscos_webview::resolve_backend(Some("cef"), Some("webview2"), None).unwrap();
         assert_eq!(kind, BackendKind::Cef);
         let kind = viscos_webview::resolve_backend(Some("webview2"), Some("cef"), None).unwrap();
@@ -233,11 +276,6 @@ mod tests {
 
     #[test]
     fn execute_process_if_subprocess_in_main_returns_none() {
-        // `cargo test -p viscos` ana process olarak çalışır; CEF
-        // subprocess dispatch `None` dönmeli. Bu test, `main.rs`'in
-        // `execute_process_if_subprocess` import ettiğini ve
-        // fonksiyonun test process'te subprocess olarak davranmadığını
-        // doğrular.
         let result = viscos_webview::execute_process_if_subprocess();
         assert!(
             result.is_none(),

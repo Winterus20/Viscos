@@ -22,6 +22,12 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 
+# Faz 1.6 Dalga 1b — Ctrl-C listener thread (tao::EventLoop::run blocks the
+# main thread, so async signal handling must run in a dedicated OS thread with
+# its own `current_thread` tokio runtime). `signal` feature provides
+# `tokio::signal::ctrl_c`; `rt` enables `Builder::new_current_thread`.
+tokio = { workspace = true, features = ["rt", "macros", "signal"] }
+
 # Faz 5.0 — Native UI + theming + Vencord POC
 parking_lot = { workspace = true }
 
