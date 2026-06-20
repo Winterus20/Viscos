@@ -6239,18 +6239,22 @@ name = "viscos-api"
 version = "0.1.0"
 dependencies = [
  "mockito",
+ "rusqlite",
  "rustls",
  "secrecy",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "twilight-gateway",
  "twilight-http",
  "twilight-model",
+ "viscos-cache",
  "viscos-core",
  "viscos-error",
+ "viscos-ipc",
 ]
 
 [[package]]

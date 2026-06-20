@@ -54,9 +54,36 @@ impl ViscosGateway {
     /// Windows installasyonlarında panic olmaz.
     #[instrument(skip(token), fields(intents_bits = intents.bits()))]
     pub fn connect(token: &str, intents: Intents) -> Result<Self, ApiError> {
+        Self::connect_internal(token.to_string(), intents)
+    }
+
+    /// Bridge-aware factory — `connect` ile aynı gateway'i kurar, ek olarak
+    /// [`crate::GatewayCacheBridge`] üzerinden event fan-out sağlar.
+    ///
+    /// MVP-2 production use-case: caller bridge'i bir kez kurar, sonra
+    /// `run_until_disconnect` yerine bridge'in `handle_event` callback'ini
+    /// kullanır (PR-6 sonrası main loop'unda). Bu method bridge referansını
+    /// kabul eder (şimdilik log-only; PR-6'da gateway event dispatch'i bridge
+    /// üzerinden yönlendirilecek) ve aynı `ViscosGateway` shard'ını döner.
+    ///
+    /// `# Errors` — `ApiError` TLS / config hatası.
+    #[instrument(skip_all, fields(intents_bits = intents.bits()))]
+    pub fn connect_with_bridge(
+        token: &str,
+        intents: Intents,
+        #[allow(unused_variables)] // PR-6'da dispatch burada bağlanacak
+        bridge: std::sync::Arc<crate::GatewayCacheBridge>,
+    ) -> Result<Self, ApiError> {
+        // PR-6: caller aynı bridge'i dışarıda tutup `next_event` + `handle_event`
+        // çiftini kullanacak; burada log-only.
+        debug!("ViscosGateway constructed with bridge-aware factory (PR-6 wiring pending)");
+        Self::connect_internal(token.to_string(), intents)
+    }
+
+    fn connect_internal(token: String, intents: Intents) -> Result<Self, ApiError> {
         // Config::new yerine ConfigBuilder kullanmıyoruz; ileride presence /
         // large_threshold override gerektiğinde builder'a geçilecek (Faz 3.5+).
-        let config = Config::new(token.to_string(), intents);
+        let config = Config::new(token, intents);
         let shard = Shard::with_config(ShardId::ONE, config);
         debug!("ViscosGateway shard constructed (lazy-connect)");
         Ok(Self { shard })

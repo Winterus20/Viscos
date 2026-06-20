@@ -6,11 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Viscos Discord REST adapter — twilight-http wrapper, rate-limit, super-properties. Gateway (Faz 3) buraya eklenecek."
+description = "Viscos Discord REST adapter — twilight-http wrapper, rate-limit, super-properties. Gateway (Faz 3) + cache bridge (MVP-2)."
 
 [dependencies]
 viscos-core = { path = "../viscos-core" }
 viscos-error = { path = "../viscos-error" }
+viscos-cache = { path = "../viscos-cache" }
+viscos-ipc = { path = "../viscos-ipc" }
 
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -18,6 +20,8 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 secrecy = { workspace = true }
+# rusqlite re-exported for `params!` macro in gateway_cache_bridge tests/SQL.
+rusqlite = { workspace = true }
 
 twilight-model = { workspace = true }
 twilight-http = { workspace = true }
@@ -29,3 +33,5 @@ mockito = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 # `twilight-http` rustls crypto provider'ı test ortamında kurmak için.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# In-memory DB fixtures for `gateway_cache_bridge` tests.
+tempfile = { workspace = true }
