@@ -89,6 +89,19 @@ qrcode = "0.14"
 tao = { version = "0.35", default-features = false }
 wry = { version = "0.55", default-features = false, features = ["os-webview", "tracing"] }
 
+# Native UI framework — iced 0.14 (ADR-0015, Faz 5.0 spike).
+# Granular features (cursorrules §6): sadece wgpu + tokio + debug + fira-sans
+# + web-colors + crisp. tiny-skia / linux-theme-detection / wayland / x11
+# devre dışı (Windows-only v1). wgpu DX12 backend Windows'ta native çalışır.
+iced = { version = "0.14", default-features = false, features = [
+    "wgpu",
+    "tokio",
+    "debug",
+    "fira-sans",
+    "web-colors",
+    "crisp",
+] }
+
 # Windows API — GDI counter (Faz 1.0 watchdog). Crate'ler kendi target dep'lerinde declare eder.
 windows = { version = "0.58", default-features = false, features = [
     "Win32_System_Threading",

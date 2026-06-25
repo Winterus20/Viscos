@@ -61,6 +61,31 @@ pub enum AuthError {
     /// MFA akışı başarısız (TOTP üretim veya doğrulama hatası).
     #[error("MFA failed: {0}")]
     MfaFailed(String),
+    /// Discord login akışı `live-http` Cargo feature'ı kapalıyken çağrıldı.
+    ///
+    /// Default build (`cargo build`) reqwest-free compile olsun diye bu feature
+    /// OFF. Production binary `cargo build --features live-http` ile
+    /// derlendiğinde varyant oluşmaz. `login.rs` içindeki fonksiyonlar
+    /// `Ok(LoginResult::Error(AuthError::LiveHttpDisabled))` döner; shell
+    /// katmanı bunu görünce "feature disabled" mesajı gösterir.
+    #[error(
+        "live-http feature disabled — recompile Viscos with `cargo build --features live-http` to enable real Discord auth"
+    )]
+    LiveHttpDisabled,
+    /// QR login poll sırasında Discord hâlâ oturum açılmadı sinyali verdi.
+    ///
+    /// Polling interval dolunca tekrar dene. LoginError enum'unda
+    /// taşınır çünkü caller (shell) tekrar deneme kararı verir.
+    #[error("QR login still pending")]
+    StillPending,
+    /// Discord login başarısız — hata kodu + mesaj korunur.
+    #[error("Discord login failed ({code}): {message}")]
+    LoginFailed {
+        /// Discord'un döndüğü hata kodu (ör. "InvalidCredentials", "CaptchaRequired").
+        code: String,
+        /// Discord'un döndüğü insan-okunabilir hata mesajı.
+        message: String,
+    },
 }
 
 /// Bellek-dwell hesap state'i. `ZeroizeOnDrop` ile drop anında zeroize.

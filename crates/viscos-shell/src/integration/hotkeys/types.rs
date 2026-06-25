@@ -9,6 +9,7 @@
 use global_hotkey::hotkey::HotKey;
 use serde::{Deserialize, Serialize};
 use viscos_error::ViscosError;
+use tokio::sync::broadcast;
 
 /// Hotkey tetiklendiğinde uygulamanın handle edeceği action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -101,14 +102,15 @@ pub fn parse_combo(combo: &str) -> Result<HotKey, ViscosError> {
 /// `global-hotkey 0.6` + `muda 0.15` Faz 1.6'da entegre edilecek.
 /// Faz 5.0'da sadece tip iskeleti.
 pub struct HotkeyEventStream {
-    is_stub: bool,
+    rx: broadcast::Receiver<HotkeyAction>,
 }
 
 impl HotkeyEventStream {
     /// Stub stream oluştur.
     #[must_use]
     pub fn stub() -> Self {
-        Self { is_stub: true }
+        let (_, rx) = broadcast::channel(16);
+        Self { rx }
     }
 
     /// Stub mı?
@@ -117,3 +119,6 @@ impl HotkeyEventStream {
         self.is_stub
     }
 }
+
+
+

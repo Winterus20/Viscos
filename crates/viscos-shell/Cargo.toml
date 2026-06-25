@@ -20,6 +20,7 @@ tao = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 
 # Faz 1.6 Dalga 1b — Ctrl-C listener thread (tao::EventLoop::run blocks the
@@ -56,6 +57,21 @@ auto-launch = "0.5"
 
 # Faz 6.0 — Single-instance cross-process lock
 single-instance = "0.3"
+
+# Faz 5.0 — iced 0.14 native side panel + spike binary (ADR-0015).
+# Granular features (cursorrules §6 + ADR-0015): sadece wgpu + tokio + debug
+# + fira-sans + web-colors + crisp. tiny-skia / linux-theme-detection /
+# wayland / x11 devre dışı (Windows-only v1). wgpu DX12 backend Windows'ta
+# native çalışır (Vulkan/Metal/WebGPU backend'leri kullanılmıyor).
+iced = { workspace = true }
+
+# Faz 5.0 spike binary — counter + theme toggle PoC (ADR-0015).
+# Windowed binary; release profilde binary size +N KB ölçülecek. Faz 5.0
+# production PR'ında bu binary kaldırılır ve `iced` runtime doğrudan
+# `ShellBuilder::with_native_panel`'a wire edilir.
+[[bin]]
+name = "iced_spike"
+path = "src/native/iced_spike.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

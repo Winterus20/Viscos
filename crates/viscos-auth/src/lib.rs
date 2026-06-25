@@ -27,17 +27,23 @@
 pub mod disclaimer;
 pub mod flow;
 pub mod login;
+pub mod login_http;
 pub mod mfa;
 pub mod shadow_mode;
 pub mod storage;
 pub mod super_properties;
 pub mod token;
+pub mod transport;
 
 pub use flow::{AuthFlow, AuthManager, AuthSession};
 pub use login::{LoginResult, QrSession};
 pub use shadow_mode::ShadowMode;
 pub use storage::{AuthError, AuthStorage, StoredAccount};
 pub use token::{DiscordToken, TokenStore};
+pub use transport::{
+    HttpMethod, MockTransport, SharedTransport, Transport, TransportError, TransportRequest,
+    TransportResponse,
+};
 
 /// `keyring-core` servis adı — Windows Credential Manager ve diğer native
 /// store'lar bu string'i uygulama kimliği olarak gösterir (kullanıcı

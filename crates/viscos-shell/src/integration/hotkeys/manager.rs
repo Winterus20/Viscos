@@ -4,7 +4,9 @@
 //! Faz 1.0'da sadece in-memory state yönetimi test edilebilir.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use tokio::sync::broadcast;
 use viscos_error::ViscosError;
 
 use super::types::{DEFAULT_BINDINGS, HotkeyAction, HotkeyBinding, HotkeyEventStream};
@@ -18,6 +20,8 @@ use super::types::{DEFAULT_BINDINGS, HotkeyAction, HotkeyBinding, HotkeyEventStr
 pub struct HotkeyManager {
     /// Kayıtlı binding'ler: action → combo.
     bindings: HashMap<HotkeyAction, String>,
+    /// Event broadcast sender.
+    sender: Arc<broadcast::Sender<HotkeyAction>>,
 }
 
 impl std::fmt::Debug for HotkeyManager {
@@ -46,7 +50,11 @@ impl HotkeyManager {
         for (combo, action) in DEFAULT_BINDINGS {
             bindings.insert(*action, (*combo).to_string());
         }
-        Ok(Self { bindings })
+        let (sender, _) = broadcast::channel(16);
+        Ok(Self {
+            bindings,
+            sender: Arc::new(sender),
+        })
     }
 
     /// Binding ekle veya güncelle.
@@ -96,12 +104,20 @@ impl HotkeyManager {
             .collect()
     }
 
-    /// Event stream (broadcast) — Faz 6.0 stub.
+    /// Event stream (broadcast) — Faz 6.0 real implementation.
     ///
     /// Gerçek implementasyon: `tokio::sync::broadcast::Sender<HotkeyAction>`
     /// ve `global-hotkey` event loop'undan `Receiver`. Faz 1.0'da stub.
     #[must_use]
     pub fn events(&self) -> HotkeyEventStream {
-        HotkeyEventStream::stub()
+        HotkeyEventStream::new(self.sender.subscribe())
+    }
+
+    /// Hotkey event'i dispatch et (OS hotkey tetiklendiğinde çağrılır).
+    ///
+    /// Faz 6.0'da `global-hotkey` event loop'undan bu method çağrılır.
+    /// Faz 1.0'da manuel test için kullanılabilir.
+    pub fn dispatch(&self, action: HotkeyAction) {
+        let _ = self.sender.send(action);
     }
 }

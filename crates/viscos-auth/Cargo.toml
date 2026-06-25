@@ -13,6 +13,14 @@ default = []
 # Faz 7.0 native voice/video için DAVE E2EE compile-time API surface.
 # `cargo check --features dave` ile davey tip import'ları doğrulanır.
 dave = ["dep:davey"]
+# `live-http` feature'ı production HTTP transport'u aktive eder. Default
+# build kapalı → cross-platform CI `reqwest` bağımlılığı olmadan hızlı build
+# alır. **NEEDS HUMAN APPROVAL** — bu feature için workspace `Cargo.toml`'a
+# `reqwest = { version = "0.12", default-features = false, features =
+# ["json", "rustls-tls"] }` eklenmeli (`.cursorrules` §4 yeni external
+# dependency insan onayı ister). Feature aktifken reqwest yoksa compile
+# hatası verir — bilinçli.
+live-http = []
 
 [dependencies]
 viscos-core = { path = "../viscos-core" }
@@ -41,8 +49,18 @@ totp-rs = { workspace = true }
 # QR login (UI render)
 qrcode = { workspace = true }
 
+# Async trait helper (Transport dyn-uyumluluğu)
+async-trait = { workspace = true }
+
 # DAVE E2EE (Faz 7'de aktif; şimdi optional + compile-time check)
 davey = { version = "0.1", optional = true }
+
+# `reqwest` (Faz 2.1 login akışları) **NOT in Cargo.toml yet** — pending
+# human approval (`.cursorrules` §4 yeni external dependency). Once approved:
+#   reqwest = { version = "0.12", default-features = false, features =
+#               ["json", "rustls-tls"], optional = true }
+# `live-http` feature gate'si implementation'ı koşullandırır; default build
+# hiç reqwest koda dokunmaz.
 
 [dev-dependencies]
 # MFA TOTP RFC 6238 vectors için.

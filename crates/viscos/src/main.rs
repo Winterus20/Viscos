@@ -41,6 +41,15 @@ use viscos_webview::{
     BackendKind, CefBackend, WebView2Backend, execute_process_if_subprocess, resolve_backend,
 };
 
+// Faz 3.0 gateway spawn
+use viscos_api::ViscosGateway;
+use viscos_auth::AuthStorage;
+
+// Faz 1.5 telemetry
+use viscos_telemetry::TelemetryStore;
+use std::sync::Arc;
+use std::path::PathBuf;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "viscos",
@@ -139,16 +148,27 @@ fn run() -> Result<()> {
     let _router = DefaultIpcRouter::new();
     info!("IPC router ready (default StubHandler — Faz 2+'da gerçek handler'lar)");
 
-    // 6. Watchdog background task — kendi thread'inde, kendi tokio runtime'ı
+    // 6. Telemetry store aç (Faz 1.5).
+    let telemetry_db_path = config.app.data_dir.join("telemetry.db");
+    let telemetry_store = match TelemetryStore::open(&telemetry_db_path) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            tracing::warn!(?e, "TelemetryStore açılamadı, watchdog telemetry atlanıyor");
+            Arc::new(TelemetryStore::open_in_memory().expect("in-memory store"))
+        }
+    };
+    info!(path = %telemetry_db_path.display(), "telemetry store opened");
+
+    // 7. Watchdog background task — kendi thread'inde, kendi tokio runtime'ı
     //    ile. Çünkü `tao::EventLoop::run()` main thread'i blokluyor;
     //    `#[tokio::main]` async main kullanamıyoruz.
     //
     //    Watchdog `tokio::spawn` + `tokio::time::interval` kullanıyor; bu
     //    yüzden ayrı bir `current_thread` runtime'a ihtiyacı var.
     //    Thread uygulama ömrü boyunca yaşar (process exit'te OS reclaim).
-    spawn_watchdog(&config);
+    spawn_watchdog(&config, telemetry_store.clone());
 
-    // 7. Backend instantiate et ve ShellBuilder'a bağla.
+    // 8. Backend instantiate et ve ShellBuilder'a bağla.
     //
     //    B1 kararı: backend seçimine göre `WebView2Backend` veya
     //    `CefBackend` (feature-gated stub veya real) instantiate edilir.
@@ -187,13 +207,91 @@ fn run() -> Result<()> {
         "Viscos ready — pencere X ile veya Ctrl-C ile kapatılabilir"
     );
 
-    // 9. Shell::run() blocking call — tao::EventLoop::run() main thread'i
+    // 9. Gateway spawn (Faz 3.0) — eğer kayıtlı hesap varsa background'ta başlat.
+    spawn_gateway_if_logged_in();
+
+    // 10. Shell::run() blocking call — tao::EventLoop::run() main thread'i
     //    bloklar, pencere X ile kapatılana veya Ctrl-C sinyali gelene
     //    kadar. Bu fonksiyon döndüğünde event loop sonlanmıştır →
     //    process temiz shutdown.
     shell.run().context("shell run")?;
 
     Ok(())
+}
+
+/// Gateway'i ayrı bir thread'de spawn et (eğer kayıtlı hesap varsa).
+///
+/// `tao::EventLoop::run()` main thread'i blokladığı için gateway'i
+/// ayrı bir thread'de çalıştırıyoruz. Thread `current_thread` tokio
+/// runtime kurup `ViscosGateway::connect()` çağırır; runtime'ı yaşatmak
+/// için `block_on(pending)` ile blokluyoruz (process exit'e kadar).
+fn spawn_gateway_if_logged_in() {
+    let storage = match AuthStorage::new() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(?e, "AuthStorage init başarısız, gateway spawn atlanıyor");
+            return;
+        }
+    };
+
+    // İlk kayıtlı hesabı bul (Faz 3.0 tek hesap varsayımı).
+    let first_account = match storage.list_accounts() {
+        Ok(accounts) if !accounts.is_empty() => accounts.first().cloned(),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(?e, "Hesap listesi alınamadı, gateway spawn atlanıyor");
+            None
+        }
+    };
+
+    let account = match first_account {
+        Some(acc) => acc,
+        None => {
+            tracing::info!("Kayıtlı hesap yok, gateway spawn atlanıyor");
+            return;
+        }
+    };
+
+    let token = account.token.expose_secret().clone();
+
+    let build_result = std::thread::Builder::new()
+        .name("viscos-gateway".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    tracing::error!(?err, "gateway tokio runtime kurulamadı");
+                    return;
+                }
+            };
+
+            let _guard = runtime.enter();
+
+            runtime.block_on(async move {
+                let intents = ViscosGateway::default_intents();
+                match ViscosGateway::connect(&token, intents) {
+                    Ok(mut gateway) => {
+                        tracing::info!("Gateway bağlandı, event loop başlatılıyor");
+                        while let Some(event) = gateway.next_event().await {
+                            tracing::debug!(?event, "Gateway event received");
+                            // Faz 3.0'da event dispatch implementasyonu buraya gelecek.
+                        }
+                        tracing::info!("Gateway event loop sonlandı");
+                    }
+                    Err(e) => {
+                        tracing::error!(?e, "Gateway bağlantısı başarısız");
+                    }
+                }
+            });
+        });
+
+    match build_result {
+        Ok(_) => info!("Gateway spawned (background thread + current_thread runtime)"),
+        Err(err) => tracing::error!(?err, "gateway thread spawn başarısız"),
+    }
 }
 
 /// Watchdog'u ayrı bir OS thread'inde, kendi tokio runtime'ı ile spawn et.
@@ -206,7 +304,7 @@ fn run() -> Result<()> {
 /// Watchdog'un `spawn()` method'u `tokio::spawn` çağırır — bu yüzden
 /// `runtime.enter()` ile runtime context'i thread-local olarak set
 /// etmemiz gerekiyor. Aksi halde "no reactor running" panic'i alırız.
-fn spawn_watchdog(config: &viscos_config::Config) {
+fn spawn_watchdog(config: &viscos_config::Config, telemetry_store: Arc<TelemetryStore>) {
     let autosave: Arc<dyn viscos_watchdog::DraftAutosave> = Arc::new(StubAutosave::new());
     let restart_signal = viscos_watchdog::RestartSignal::default();
     let wd_config = WatchdogConfig {
@@ -215,7 +313,8 @@ fn spawn_watchdog(config: &viscos_config::Config) {
         sample_interval: Duration::from_secs(config.watchdog.sample_interval_secs),
         warmup_samples: config.watchdog.warmup_samples,
     };
-    let watchdog = Watchdog::new(wd_config, restart_signal, autosave);
+    let telemetry_sink = telemetry_store.sink();
+    let watchdog = Watchdog::with_telemetry(wd_config, restart_signal, autosave, telemetry_sink);
 
     let build_result = std::thread::Builder::new()
         .name("viscos-watchdog".into())

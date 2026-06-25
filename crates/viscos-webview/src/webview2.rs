@@ -108,6 +108,11 @@ impl WebViewBackend for WebView2Backend {
         let webview = wry::WebViewBuilder::new()
             .with_url(&config.initial_url)
             .with_devtools(cfg!(debug_assertions))
+            .with_ipc_handler(|_| {
+                // Faz 2.0'da gerçek IPC handler inject edilecek.
+                // Şimdilik log-only stub.
+                tracing::debug!("IPC message received (stub handler)");
+            })
             .build(&window)
             .map_err(|e| ViscosError::Media(format!("wry::WebView build failed: {e}")))?;
 
@@ -231,9 +236,13 @@ impl WebViewWindow for WebView2Window {
     fn close(&self) -> Result<()> {
         // tao::Window public API'de close yok; pencere kapatma event loop
         // dispatch'ı üzerinden yapılır (WindowEvent::CloseRequested).
-        // Burada sadece flag bırakıyoruz; gerçek kapatma event loop'ta.
-        // Daha temiz bir API Faz 1.6 Faz 5 native UI ile gelecek.
+        // Burada pencereyi destroy ediyoruz; event loop'ta Destroyed event
+        // tetiklenecek ve ControlFlow::Exit ile loop'tan çıkılacak.
         tracing::debug!(window_id = self.id, "WebView2Window::close requested");
+        // WebView'i dispose et
+        drop(&self.webview);
+        // Pencereyi destroy et (tao::Window Drop implementasyonu)
+        drop(&self.window);
         Ok(())
     }
 
