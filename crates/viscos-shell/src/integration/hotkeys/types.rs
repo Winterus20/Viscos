@@ -102,15 +102,25 @@ pub fn parse_combo(combo: &str) -> Result<HotKey, ViscosError> {
 /// `global-hotkey 0.6` + `muda 0.15` Faz 1.6'da entegre edilecek.
 /// Faz 5.0'da sadece tip iskeleti.
 pub struct HotkeyEventStream {
+    /// Broadcast receiver — Faz 6.0'da `next()`/`try_next()` ile tüketilecek.
+    /// Şu an sadece sahipleniliyor; kullanılmadığı için `dead_code` kabul edildi.
+    #[allow(dead_code)]
     rx: broadcast::Receiver<HotkeyAction>,
+    is_stub: bool,
 }
 
 impl HotkeyEventStream {
+    /// Gerçek broadcast receiver ile stream oluştur.
+    #[must_use]
+    pub fn new(rx: broadcast::Receiver<HotkeyAction>) -> Self {
+        Self { rx, is_stub: false }
+    }
+
     /// Stub stream oluştur.
     #[must_use]
     pub fn stub() -> Self {
         let (_, rx) = broadcast::channel(16);
-        Self { rx }
+        Self { rx, is_stub: true }
     }
 
     /// Stub mı?

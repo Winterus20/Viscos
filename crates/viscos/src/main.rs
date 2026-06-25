@@ -47,8 +47,6 @@ use viscos_auth::AuthStorage;
 
 // Faz 1.5 telemetry
 use viscos_telemetry::TelemetryStore;
-use std::sync::Arc;
-use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -149,7 +147,10 @@ fn run() -> Result<()> {
     info!("IPC router ready (default StubHandler — Faz 2+'da gerçek handler'lar)");
 
     // 6. Telemetry store aç (Faz 1.5).
-    let telemetry_db_path = config.app.data_dir.join("telemetry.db");
+    // `%APPDATA%` placeholder'ını gerçek Windows APPDATA path'ine çöz.
+    let app_data_dir = resolve_app_data_dir(&config.app.data_dir)
+        .context("resolving app data directory")?;
+    let telemetry_db_path = app_data_dir.join("telemetry.db");
     let telemetry_store = match TelemetryStore::open(&telemetry_db_path) {
         Ok(store) => Arc::new(store),
         Err(e) => {
@@ -217,6 +218,30 @@ fn run() -> Result<()> {
     shell.run().context("shell run")?;
 
     Ok(())
+}
+
+/// Config'deki `%APPDATA%` placeholder'ını gerçek dizine çöz.
+///
+/// Windows'ta `%APPDATA%` `std::env::var("APPDATA")` ile çözülür.
+/// Placeholder içermeyen path'ler olduğu gibi döndürülür.
+///
+/// # Errors
+///
+/// `APPDATA` env var set değilse veya path boşsa `anyhow::Error`.
+fn resolve_app_data_dir(raw: &str) -> Result<std::path::PathBuf> {
+    const PLACEHOLDER: &str = "%APPDATA%";
+    if raw.starts_with(PLACEHOLDER) {
+        let appdata = std::env::var("APPDATA")
+            .with_context(|| format!("{PLACEHOLDER} environment variable not set"))?;
+        let remainder = raw
+            .strip_prefix(PLACEHOLDER)
+            .expect("prefix just checked")
+            .trim_start_matches('/')
+            .trim_start_matches('\\');
+        Ok(std::path::PathBuf::from(appdata).join(remainder))
+    } else {
+        Ok(std::path::PathBuf::from(raw))
+    }
 }
 
 /// Gateway'i ayrı bir thread'de spawn et (eğer kayıtlı hesap varsa).
