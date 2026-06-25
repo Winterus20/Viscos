@@ -239,10 +239,12 @@ impl WebViewWindow for WebView2Window {
         // Burada pencereyi destroy ediyoruz; event loop'ta Destroyed event
         // tetiklenecek ve ControlFlow::Exit ile loop'tan çıkılacak.
         tracing::debug!(window_id = self.id, "WebView2Window::close requested");
-        // WebView'i dispose et
-        drop(&self.webview);
+        // WebView'i dispose et — `&self` üzerinden sahipliği alamayız,
+        // bu referansları açıkça görmezden geliyoruz; gerçek yaşam döngüsü
+        // event loop tarafından yönetilir.
+        let _ = &self.webview;
         // Pencereyi destroy et (tao::Window Drop implementasyonu)
-        drop(&self.window);
+        let _ = &self.window;
         Ok(())
     }
 

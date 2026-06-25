@@ -22,6 +22,11 @@ viscos-webview = { path = "../viscos-webview" }
 viscos-ipc = { path = "../viscos-ipc" }
 viscos-watchdog = { path = "../viscos-watchdog" }
 
+# Faz 1.5 telemetry + Faz 2.0 auth + Faz 3.0 gateway bootstrap.
+viscos-api = { path = "../viscos-api" }
+viscos-auth = { path = "../viscos-auth" }
+viscos-telemetry = { path = "../viscos-telemetry" }
+
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["signal", "rt", "macros"] }
 anyhow = { workspace = true }

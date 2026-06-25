@@ -95,7 +95,7 @@ jobs:
         run: cargo build --workspace --release --locked
 
       # Binary bütçesi koruması (15-25 MB hedefi)
-      - name: Check binary size (gate: 25 MB)
+      - name: "Check binary size (gate: 25 MB)"
         shell: bash
         run: |
           SIZE=$(stat -c%s target/release/viscos.exe)
